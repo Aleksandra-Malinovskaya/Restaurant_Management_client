@@ -23,45 +23,68 @@ export const AuthProvider = ({ children }) => {
       const token = localStorage.getItem("token");
       const savedUser = localStorage.getItem("user");
 
+      console.log("🔐 checkAuth:", { token, savedUser });
+
       if (token && savedUser) {
-        // Сначала устанавливаем пользователя из localStorage
         const userData = JSON.parse(savedUser);
+        console.log("✅ Устанавливаем пользователя из localStorage:", userData);
+
         setUser(userData);
         setIsAuthenticated(true);
 
-        // Затем проверяем актуальность токена
+        // Дополнительная проверка токена
         try {
           const data = await authService.checkAuth();
+          console.log("✅ Токен валиден:", data.user);
           setUser(data.user);
           localStorage.setItem("user", JSON.stringify(data.user));
         } catch (error) {
-          console.log("Токен устарел, используем сохраненные данные");
-          // Продолжаем использовать сохраненные данные
+          console.log("⚠️ Токен невалиден, но используем сохраненные данные");
+          // Оставляем сохраненные данные
         }
+      } else {
+        console.log("❌ Нет токена или пользователя в localStorage");
+        setIsAuthenticated(false);
+        setUser(null);
       }
     } catch (error) {
-      console.log("Ошибка проверки авторизации:", error);
+      console.error("❌ Ошибка checkAuth:", error);
+      setIsAuthenticated(false);
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    console.log("🔄 useEffect запущен");
     checkAuth();
   }, [checkAuth]);
 
   const login = async (email, password) => {
     try {
+      console.log("🔐 Начало login:", email);
       const data = await authService.login(email, password);
+      console.log("✅ Login успешен:", data);
+
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
+
+      // ЯВНО устанавливаем состояние
       setUser(data.user);
       setIsAuthenticated(true);
+
+      console.log("✅ Состояние установлено!", {
+        user: data.user,
+        isAuthenticated: true,
+      });
+
       return { success: true };
     } catch (error) {
+      console.error("❌ Ошибка login:", error);
       return {
         success: false,
-        message: error.response?.data?.message || "Ошибка авторизации",
+        message: error.message || "Ошибка авторизации",
       };
     }
   };
@@ -82,12 +105,13 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return {
         success: false,
-        message: error.response?.data?.message || "Ошибка регистрации",
+        message: error.message || "Ошибка регистрации",
       };
     }
   };
 
   const logout = () => {
+    console.log("🚪 Logout");
     authService.logout();
     setUser(null);
     setIsAuthenticated(false);
@@ -102,6 +126,12 @@ export const AuthProvider = ({ children }) => {
     logout,
     checkAuth,
   };
+
+  console.log("🔄 AuthContext рендер:", {
+    user,
+    isLoading,
+    isAuthenticated,
+  });
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -10,8 +10,17 @@ const Login = () => {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  // Редирект если уже авторизован
+  React.useEffect(() => {
+    console.log("🔍 Login проверка авторизации:", isAuthenticated);
+    if (isAuthenticated) {
+      console.log("✅ Уже авторизован, редирект на /dashboard");
+      navigate("/dashboard");
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleChange = (e) => {
     setFormData({
@@ -25,21 +34,49 @@ const Login = () => {
     setError("");
     setIsLoading(true);
 
+    console.log("📤 Отправка формы login");
+
     const result = await login(formData.email, formData.password);
 
     if (result.success) {
-      navigate("/dashboard");
+      console.log("✅ Login успешен, ждем обновления состояния...");
+      // Не делаем navigate здесь - сработает useEffect выше
     } else {
+      console.log("❌ Login ошибка:", result.message);
       setError(result.message);
+      setIsLoading(false);
     }
+  };
 
-    setIsLoading(false);
+  const testBackend = async () => {
+    try {
+      const response = await fetch("http://localhost:5000/api/auth/me", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      const data = await response.json();
+      console.log("Тест бэкенда:", data);
+      alert(`Бэкенд отвечает: ${data.user ? "Авторизован" : "Не авторизован"}`);
+    } catch (err) {
+      console.error("Бэкенд не доступен:", err);
+      alert("Бэкенд не доступен!");
+    }
   };
 
   return (
     <div className="container-fluid vh-100 bg-light">
       <div className="row h-100 justify-content-center align-items-center">
         <div className="col-md-4 col-sm-8">
+          <div className="text-center mb-3">
+            <button
+              onClick={testBackend}
+              className="btn btn-outline-secondary btn-sm"
+            >
+              Проверить авторизацию
+            </button>
+          </div>
+
           <div className="card shadow">
             <div className="card-header bg-primary text-white text-center">
               <h4 className="mb-0">
@@ -52,16 +89,8 @@ const Login = () => {
               <h5 className="card-title text-center mb-4">Вход в систему</h5>
 
               {error && (
-                <div
-                  className="alert alert-danger alert-dismissible fade show"
-                  role="alert"
-                >
-                  {error}
-                  <button
-                    type="button"
-                    className="btn-close"
-                    onClick={() => setError("")}
-                  ></button>
+                <div className="alert alert-danger">
+                  <strong>Ошибка:</strong> {error}
                 </div>
               )}
 
@@ -78,7 +107,7 @@ const Login = () => {
                     name="email"
                     value={formData.email}
                     onChange={handleChange}
-                    placeholder="Введите ваш email"
+                    placeholder="admin@restaurant.com"
                     required
                   />
                 </div>
