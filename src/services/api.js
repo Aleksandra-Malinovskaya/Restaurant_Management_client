@@ -1,36 +1,52 @@
-import axios from "axios";
+import { $host, $authHost } from "../http";
+import { JWT_TOKEN, USER_DATA } from "../utils/consts";
 
-const API_URL = "http://localhost:5000/api";
+export const authAPI = {
+  async login(email, password) {
+    const { data } = await $host.post("auth/login", { email, password });
+    console.log("📨 Данные от сервера при логине:", data);
 
-const $api = axios.create({
-  withCredentials: false,
-  baseURL: API_URL,
-});
-
-$api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-$api.interceptors.response.use(
-  (config) => config,
-  async (error) => {
-    const originalRequest = error.config;
-    if (error.response.status === 401 && !originalRequest._isRetry) {
-      originalRequest._isRetry = true;
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.href = "/login";
-      } catch (e) {
-        console.log("НЕ АВТОРИЗОВАН");
-      }
+    // Убедимся что данные есть перед записью
+    if (data.token && data.user) {
+      localStorage.setItem(JWT_TOKEN, data.token);
+      localStorage.setItem(USER_DATA, JSON.stringify(data.user));
+      console.log("✅ Данные записаны в localStorage:", data.user);
+    } else {
+      console.error("❌ Нет token или user в ответе сервера");
     }
-    throw error;
-  }
-);
+    return data;
+  },
 
-export default $api;
+  async register(email, password, firstName, lastName) {
+    const { data } = await $host.post("auth/register", {
+      email,
+      password,
+      firstName,
+      lastName,
+    });
+    console.log("📨 Данные от сервера при регистрации:", data);
+
+    if (data.token && data.user) {
+      localStorage.setItem(JWT_TOKEN, data.token);
+      localStorage.setItem(USER_DATA, JSON.stringify(data.user));
+      console.log("✅ Данные записаны в localStorage:", data.user);
+    } else {
+      console.error("❌ Нет token или user в ответе сервера");
+    }
+    return data;
+  },
+
+  async checkAuth() {
+    try {
+      const { data } = await $authHost.get("auth/me");
+      console.log("🔐 Проверка авторизации:", data);
+      if (data.user) {
+        localStorage.setItem(USER_DATA, JSON.stringify(data.user));
+      }
+      return data;
+    } catch (error) {
+      console.error("❌ Ошибка проверки авторизации:", error);
+      throw error;
+    }
+  },
+};

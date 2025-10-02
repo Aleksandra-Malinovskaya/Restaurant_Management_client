@@ -1,11 +1,6 @@
-import React, {
-  createContext,
-  useState,
-  useContext,
-  useEffect,
-  useCallback,
-} from "react";
-import { authService } from "../services/authService";
+import React, { createContext, useState, useContext, useEffect } from "react";
+import { authAPI } from "../services/api";
+import { JWT_TOKEN, USER_DATA } from "../utils/consts";
 
 const AuthContext = createContext();
 
@@ -15,123 +10,110 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const checkAuth = useCallback(async () => {
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
     try {
-      const token = localStorage.getItem("token");
-      const savedUser = localStorage.getItem("user");
+      const token = localStorage.getItem(JWT_TOKEN);
+      const savedUser = localStorage.getItem(USER_DATA);
 
       console.log("🔐 checkAuth:", { token, savedUser });
 
-      if (token && savedUser) {
-        const userData = JSON.parse(savedUser);
-        console.log("✅ Устанавливаем пользователя из localStorage:", userData);
-
-        setUser(userData);
-        setIsAuthenticated(true);
-
-        // Дополнительная проверка токена
+      // Проверяем что savedUser не undefined и не null
+      if (token && savedUser && savedUser !== "undefined") {
         try {
-          const data = await authService.checkAuth();
-          console.log("✅ Токен валиден:", data.user);
-          setUser(data.user);
-          localStorage.setItem("user", JSON.stringify(data.user));
-        } catch (error) {
-          console.log("⚠️ Токен невалиден, но используем сохраненные данные");
-          // Оставляем сохраненные данные
+          const userData = JSON.parse(savedUser);
+          console.log(
+            "✅ Устанавливаем пользователя из localStorage:",
+            userData
+          );
+          setUser(userData);
+
+          // Проверяем актуальность токена
+          try {
+            const data = await authAPI.checkAuth();
+            console.log("✅ Токен валиден:", data.user);
+            setUser(data.user);
+            localStorage.setItem(USER_DATA, JSON.stringify(data.user));
+          } catch (e) {
+            console.log("⚠️ Токен невалиден, но используем сохраненные данные");
+            // Оставляем сохраненные данные
+          }
+        } catch (parseError) {
+          console.error("❌ Ошибка парсинга user из localStorage:", parseError);
+          // Очищаем некорректные данные
+          localStorage.removeItem(USER_DATA);
+          localStorage.removeItem(JWT_TOKEN);
         }
       } else {
         console.log("❌ Нет токена или пользователя в localStorage");
-        setIsAuthenticated(false);
         setUser(null);
       }
     } catch (error) {
       console.error("❌ Ошибка checkAuth:", error);
-      setIsAuthenticated(false);
       setUser(null);
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    console.log("🔄 useEffect запущен");
-    checkAuth();
-  }, [checkAuth]);
+  };
 
   const login = async (email, password) => {
+    setIsLoading(true);
     try {
       console.log("🔐 Начало login:", email);
-      const data = await authService.login(email, password);
+      const data = await authAPI.login(email, password);
       console.log("✅ Login успешен:", data);
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
-
-      // ЯВНО устанавливаем состояние
       setUser(data.user);
-      setIsAuthenticated(true);
-
-      console.log("✅ Состояние установлено!", {
-        user: data.user,
-        isAuthenticated: true,
-      });
-
       return { success: true };
-    } catch (error) {
-      console.error("❌ Ошибка login:", error);
+    } catch (e) {
+      console.error("❌ Ошибка login:", e);
       return {
         success: false,
-        message: error.message || "Ошибка авторизации",
+        message: e.response?.data?.message || "Ошибка авторизации",
       };
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const register = async (email, password, firstName, lastName) => {
+    setIsLoading(true);
     try {
-      const data = await authService.register(
-        email,
-        password,
-        firstName,
-        lastName
-      );
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      const data = await authAPI.register(email, password, firstName, lastName);
       setUser(data.user);
-      setIsAuthenticated(true);
       return { success: true };
-    } catch (error) {
+    } catch (e) {
       return {
         success: false,
-        message: error.message || "Ошибка регистрации",
+        message: e.response?.data?.message || "Ошибка регистрации",
       };
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const logout = () => {
     console.log("🚪 Logout");
-    authService.logout();
+    localStorage.removeItem(JWT_TOKEN);
+    localStorage.removeItem(USER_DATA);
     setUser(null);
-    setIsAuthenticated(false);
   };
 
-  const value = {
-    user,
-    isLoading,
-    isAuthenticated,
-    login,
-    register,
-    logout,
-    checkAuth,
-  };
-
-  console.log("🔄 AuthContext рендер:", {
-    user,
-    isLoading,
-    isAuthenticated,
-  });
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        login,
+        register,
+        logout,
+        isAuth: !!user,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 };
