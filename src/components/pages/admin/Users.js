@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from "react";
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
-import UserModal from "../components/UserModal";
 import { userAPI } from "../../../services/userAPI";
 
 const Users = () => {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editingUser, setEditingUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     loadUsers();
@@ -19,54 +17,14 @@ const Users = () => {
   const loadUsers = async () => {
     try {
       setLoading(true);
+      setError("");
       const data = await userAPI.getAll();
       setUsers(data);
     } catch (error) {
       console.error("Ошибка загрузки пользователей:", error);
+      setError("Не удалось загрузить пользователей");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleCreateUser = () => {
-    setEditingUser(null);
-    setShowModal(true);
-  };
-
-  const handleEditUser = (user) => {
-    setEditingUser(user);
-    setShowModal(true);
-  };
-
-  const handleSaveUser = async (userData) => {
-    try {
-      if (editingUser) {
-        await userAPI.update(editingUser.id, userData);
-      } else {
-        await userAPI.create(userData);
-      }
-      setShowModal(false);
-      loadUsers();
-    } catch (error) {
-      console.error("Ошибка сохранения пользователя:", error);
-    }
-  };
-
-  const handleChangeRole = async (userId, newRole) => {
-    try {
-      await userAPI.changeRole(userId, newRole);
-      loadUsers();
-    } catch (error) {
-      console.error("Ошибка изменения роли:", error);
-    }
-  };
-
-  const handleToggleStatus = async (userId, isActive) => {
-    try {
-      await userAPI.changeStatus(userId, isActive);
-      loadUsers();
-    } catch (error) {
-      console.error("Ошибка изменения статуса:", error);
     }
   };
 
@@ -92,10 +50,38 @@ const Users = () => {
 
   const filteredUsers = users.filter(
     (u) =>
-      u.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchTerm.toLowerCase())
+      u.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      u.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      u.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const handleCreateUser = () => {
+    alert("Функция добавления пользователя в разработке");
+  };
+
+  const handleEditUser = (user) => {
+    alert(`Редактирование пользователя: ${user.firstName} ${user.lastName}`);
+  };
+
+  const handleChangeRole = async (userId, newRole) => {
+    try {
+      await userAPI.changeRole(userId, newRole);
+      loadUsers(); // Перезагружаем список
+    } catch (error) {
+      console.error("Ошибка изменения роли:", error);
+      alert("Не удалось изменить роль пользователя");
+    }
+  };
+
+  const handleToggleStatus = async (userId, isActive) => {
+    try {
+      await userAPI.changeStatus(userId, isActive);
+      loadUsers(); // Перезагружаем список
+    } catch (error) {
+      console.error("Ошибка изменения статуса:", error);
+      alert("Не удалось изменить статус пользователя");
+    }
+  };
 
   if (loading) {
     return (
@@ -145,46 +131,18 @@ const Users = () => {
           </div>
         </div>
 
-        {/* Поиск и фильтры */}
-        <div className="row mb-4">
-          <div className="col-12">
-            <div className="card">
-              <div className="card-body">
-                <div className="row g-3">
-                  <div className="col-md-6">
-                    <div className="input-group">
-                      <span className="input-group-text">
-                        <i className="bi bi-search"></i>
-                      </span>
-                      <input
-                        type="text"
-                        className="form-control"
-                        placeholder="Поиск по имени, фамилии или email..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="col-md-6">
-                    <div className="d-flex gap-2">
-                      <button className="btn btn-outline-secondary">
-                        <i className="bi bi-filter me-2"></i>
-                        Фильтры
-                      </button>
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={loadUsers}
-                      >
-                        <i className="bi bi-arrow-clockwise me-2"></i>
-                        Обновить
-                      </button>
-                    </div>
-                  </div>
-                </div>
+        {error && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="alert alert-danger">
+                <i className="bi bi-exclamation-triangle me-2"></i>
+                {error}
               </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Статистика по ролям */}
         <div className="row mb-4">
           <div className="col-12">
             <div className="card">
@@ -242,6 +200,47 @@ const Users = () => {
           </div>
         </div>
 
+        {/* Поиск и фильтры */}
+        <div className="row mb-4">
+          <div className="col-12">
+            <div className="card">
+              <div className="card-body">
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <div className="input-group">
+                      <span className="input-group-text">
+                        <i className="bi bi-search"></i>
+                      </span>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Поиск по имени, фамилии или email..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="col-md-6">
+                    <div className="d-flex gap-2">
+                      <button className="btn btn-outline-secondary">
+                        <i className="bi bi-filter me-2"></i>
+                        Фильтры
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={loadUsers}
+                      >
+                        <i className="bi bi-arrow-clockwise me-2"></i>
+                        Обновить
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Таблица пользователей */}
         <div className="row">
           <div className="col-12">
@@ -276,8 +275,8 @@ const Users = () => {
                                 style={{ width: "40px", height: "40px" }}
                               >
                                 <span className="text-white fw-bold">
-                                  {user.firstName[0]}
-                                  {user.lastName[0]}
+                                  {user.firstName?.[0]}
+                                  {user.lastName?.[0]}
                                 </span>
                               </div>
                               <div>
@@ -334,9 +333,11 @@ const Users = () => {
                           </td>
                           <td>
                             <small className="text-muted">
-                              {new Date(user.createdAt).toLocaleDateString(
-                                "ru-RU"
-                              )}
+                              {user.createdAt
+                                ? new Date(user.createdAt).toLocaleDateString(
+                                    "ru-RU"
+                                  )
+                                : "Н/Д"}
                             </small>
                           </td>
                           <td>
@@ -368,7 +369,11 @@ const Users = () => {
                 {filteredUsers.length === 0 && (
                   <div className="text-center py-5">
                     <i className="bi bi-people display-1 text-muted"></i>
-                    <h5 className="mt-3 text-muted">Пользователи не найдены</h5>
+                    <h5 className="mt-3 text-muted">
+                      {users.length === 0
+                        ? "Пользователи не найдены"
+                        : "Пользователи по вашему запросу не найдены"}
+                    </h5>
                     <p className="text-muted">
                       Попробуйте изменить условия поиска
                     </p>
@@ -379,15 +384,6 @@ const Users = () => {
           </div>
         </div>
       </div>
-
-      {/* Модальное окно пользователя */}
-      {showModal && (
-        <UserModal
-          user={editingUser}
-          onSave={handleSaveUser}
-          onClose={() => setShowModal(false)}
-        />
-      )}
     </div>
   );
 };

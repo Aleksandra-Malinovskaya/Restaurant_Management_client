@@ -9,17 +9,24 @@ import {
   TRAINEE_ROLE,
 } from "../utils/consts";
 
-// Страницы для разных ролей
+// Основные страницы
 import Auth from "./pages/Auth";
 import Admin from "./pages/admin/Admin";
 import Waiter from "./pages/Waiter";
 import Chef from "./pages/Chef";
 import Trainee from "./pages/Trainee";
 
-const AppRouter = () => {
-  const { user, isAuth } = useAuth();
+// Админские страницы управления
+import Users from "./pages/admin/Users";
+// import Dishes from "./pages/admin/Dishes";
+// import Categories from "./pages/admin/Categories";
+// import Tables from "./pages/admin/Tables";
+// import Statistics from "./pages/admin/Statistics";
 
-  console.log("🔄 AppRouter:", { user, isAuth });
+const AppRouter = () => {
+  const { user } = useAuth();
+
+  console.log("🔄 AppRouter:", { user });
 
   // Определяем на какую страницу перенаправлять пользователя
   const getRolePage = () => {
@@ -52,12 +59,26 @@ const AppRouter = () => {
 
   return (
     <Routes>
+      {/* Основной маршрут */}
       <Route path="/" element={getRolePage()} />
+
+      {/* Страницы авторизации */}
       <Route path="/auth" element={<Auth />} />
+
+      {/* Главные страницы по ролям */}
       <Route path="/admin" element={<Admin />} />
       <Route path="/waiter" element={<Waiter />} />
       <Route path="/chef" element={<Chef />} />
       <Route path="/trainee" element={<Trainee />} />
+
+      {/* Админские страницы управления - ДОЛЖНЫ БЫТЬ ПОЛНЫЕ ПУТИ */}
+      <Route path="/admin/users" element={<Users />} />
+      {/* <Route path="/admin/dishes" element={<Dishes />} />
+      <Route path="/admin/categories" element={<Categories />} />
+      <Route path="/admin/tables" element={<Tables />} />
+      <Route path="/admin/statistics" element={<Statistics />} /> */}
+
+      {/* Запасной маршрут */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
