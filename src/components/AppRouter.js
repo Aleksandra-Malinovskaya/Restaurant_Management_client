@@ -11,7 +11,7 @@ import {
 
 // Страницы для разных ролей
 import Auth from "./pages/Auth";
-import Admin from "./pages/Admin";
+import Admin from "./pages/admin/Admin";
 import Waiter from "./pages/Waiter";
 import Chef from "./pages/Chef";
 import Trainee from "./pages/Trainee";

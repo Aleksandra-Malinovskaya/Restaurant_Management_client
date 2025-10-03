@@ -9,7 +9,7 @@ const $authHost = axios.create({
   baseURL: process.env.REACT_APP_API_URL || "http://localhost:5000/api/",
 });
 
-// Автоматически добавляем токен к запросам
+
 const authInterceptor = (config) => {
   config.headers.authorization = `Bearer ${localStorage.getItem(JWT_TOKEN)}`;
   return config;
