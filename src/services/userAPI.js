@@ -35,4 +35,15 @@ export const userAPI = {
     const { data } = await $authHost.delete(`users/${id}`);
     return data;
   },
+  changePassword: async (userId, newPassword) => {
+    const { data } = await $authHost.put(`/user/${userId}/password`, {
+      newPassword,
+    });
+    return data;
+  },
+
+  updatePassword: async (userId, passwordData) => {
+    const { data } = await $authHost.put(`/user/${userId}`, passwordData);
+    return data;
+  },
 };
