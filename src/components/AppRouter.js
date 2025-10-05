@@ -21,7 +21,7 @@ import Users from "./pages/admin/Users";
 import Dishes from "./pages/admin/Dishes";
 import Categories from "./pages/admin/Categories";
 import TablesManagement from "./pages/admin/TablesManagement";
-// import Statistics from "./pages/admin/Statistics";
+import Stats from "./pages/admin/Stats";
 
 const AppRouter = () => {
   const { user } = useAuth();
@@ -76,7 +76,7 @@ const AppRouter = () => {
       <Route path="/admin/dishes" element={<Dishes />} />
       <Route path="/admin/categories" element={<Categories />} />
       <Route path="/admin/tables" element={<TablesManagement />} />
-      {/* <Route path="/admin/statistics" element={<Statistics />} /> */}
+      <Route path="/admin/statistics" element={<Stats />} />
 
       {/* Запасной маршрут */}
       <Route path="*" element={<Navigate to="/" replace />} />
