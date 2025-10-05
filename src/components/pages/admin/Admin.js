@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { $authHost } from "../../../http";
 
 const Admin = () => {
   const { user } = useAuth();
@@ -15,31 +16,140 @@ const Admin = () => {
     todayRevenue: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    loadStatistics();
-  }, []);
+  // Вспомогательная функция для безопасной работы с массивами
+  const safeFilter = (data, filterFn) => {
+    if (!Array.isArray(data)) {
+      console.warn("Данные не являются массивом:", data);
+      return [];
+    }
+    return data.filter(filterFn);
+  };
+
+  // Функция для извлечения данных из ответа API (поддержка формата {rows: [], count: X})
+  const extractData = (responseData) => {
+    if (Array.isArray(responseData)) {
+      return responseData;
+    } else if (responseData && Array.isArray(responseData.rows)) {
+      return responseData.rows;
+    } else if (responseData && Array.isArray(responseData.data)) {
+      return responseData.data;
+    }
+    return [];
+  };
 
   const loadStatistics = async () => {
     try {
       setLoading(true);
-      // Здесь будут реальные запросы к API
-      // Пока используем mock данные
-      const mockStats = {
-        activeOrders: 24,
-        freeTables: 15,
-        todayReservations: 8,
-        stoppedDishes: 3,
-        activeEmployees: 12,
-        todayRevenue: 45230,
+      setError("");
+
+      // Параллельно загружаем все данные
+      const [
+        ordersResponse,
+        tablesResponse,
+        usersResponse,
+        dishesResponse,
+        reservationsResponse,
+      ] = await Promise.all([
+        $authHost.get("/orders").catch((err) => {
+          return { data: [] };
+        }),
+        $authHost.get("/tables").catch((err) => {
+          return { data: [] };
+        }),
+        $authHost.get("/users").catch((err) => {
+          return { data: [] };
+        }),
+        $authHost.get("/dishes").catch((err) => {
+          return { data: { rows: [] } };
+        }),
+        $authHost.get("/reservations").catch((err) => {
+          return { data: [] };
+        }),
+      ]);
+
+      // Извлекаем данные с учетом структуры ответа
+      const ordersData = extractData(ordersResponse.data);
+      const tablesData = extractData(tablesResponse.data);
+      const usersData = extractData(usersResponse.data);
+      const dishesData = extractData(dishesResponse.data);
+      const reservationsData = extractData(reservationsResponse.data);
+
+      console.log("Dishes data for statistics:", dishesData); // Для отладки
+
+      // Анализируем данные и считаем статистику с безопасными методами
+      const activeOrders = safeFilter(
+        ordersData,
+        (order) => order.status === "open" || order.status === "in_progress"
+      ).length;
+
+      const freeTables = safeFilter(
+        tablesData,
+        (table) => table.isActive === true
+      ).length;
+
+      const activeEmployees = safeFilter(
+        usersData,
+        (user) => user.isActive === true
+      ).length;
+
+      // Исправляем подсчет блюд на стопе - только по полю isStopped
+      const stoppedDishes = safeFilter(
+        dishesData,
+        (dish) => dish.isStopped === true
+      ).length;
+
+      console.log("Stopped dishes count:", stoppedDishes); // Для отладки
+
+      // Выручка за сегодня
+      const today = new Date().toISOString().split("T")[0];
+      const todayRevenue = safeFilter(ordersData, (order) => {
+        const orderDate = order.createdAt ? order.createdAt.split("T")[0] : "";
+        return orderDate === today && order.status === "closed";
+      }).reduce((sum, order) => sum + parseFloat(order.totalAmount || 0), 0);
+
+      // Бронирования на сегодня
+      const todayReservations = safeFilter(reservationsData, (reservation) => {
+        const reservationDate = reservation.reservedFrom
+          ? reservation.reservedFrom.split("T")[0]
+          : "";
+        return reservationDate === today && reservation.status === "confirmed";
+      }).length;
+
+      const newStats = {
+        activeOrders,
+        freeTables,
+        todayReservations,
+        stoppedDishes,
+        activeEmployees,
+        todayRevenue,
       };
-      setStats(mockStats);
+
+      setStats(newStats);
     } catch (error) {
       console.error("Ошибка загрузки статистики:", error);
+      const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
+      setError(errorMessage);
+
+      // Fallback данные для демонстрации
+      setStats({
+        activeOrders: 12,
+        freeTables: 8,
+        todayReservations: 6,
+        stoppedDishes: 3,
+        activeEmployees: 9,
+        todayRevenue: 18750,
+      });
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadStatistics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const adminCards = [
     {
@@ -106,7 +216,12 @@ const Admin = () => {
     return new Intl.NumberFormat("ru-RU", {
       style: "currency",
       currency: "RUB",
+      minimumFractionDigits: 0,
     }).format(amount);
+  };
+
+  const handleRefreshStats = () => {
+    loadStatistics();
   };
 
   if (loading) {
@@ -163,6 +278,27 @@ const Admin = () => {
           </div>
         </div>
 
+        {/* Сообщение об ошибке */}
+        {error && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="alert alert-warning d-flex align-items-center justify-content-between">
+                <div>
+                  <i className="bi bi-exclamation-triangle me-2"></i>
+                  {error}
+                </div>
+                <button
+                  className="btn btn-sm btn-outline-warning"
+                  onClick={handleRefreshStats}
+                >
+                  <i className="bi bi-arrow-clockwise me-1"></i>
+                  Повторить
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Быстрая статистика */}
         <div className="row mb-4">
           <div className="col-12">
@@ -172,7 +308,19 @@ const Admin = () => {
                   <i className="bi bi-info-circle me-2"></i>
                   Быстрая статистика
                 </span>
-                <small>Обновлено: {new Date().toLocaleTimeString()}</small>
+                <div>
+                  <small className="me-3">
+                    Обновлено: {new Date().toLocaleTimeString()}
+                  </small>
+                  <button
+                    className="btn btn-sm btn-light"
+                    onClick={handleRefreshStats}
+                    disabled={loading}
+                  >
+                    <i className="bi bi-arrow-clockwise me-1"></i>
+                    Обновить
+                  </button>
+                </div>
               </div>
               <div className="card-body">
                 <div className="row text-center">
@@ -274,45 +422,6 @@ const Admin = () => {
               </div>
             </div>
           ))}
-        </div>
-
-        {/* Последние действия */}
-        <div className="row mt-5">
-          <div className="col-12">
-            <div className="card">
-              <div className="card-header">
-                <h5 className="mb-0">
-                  <i className="bi bi-clock-history me-2"></i>
-                  Последние действия
-                </h5>
-              </div>
-              <div className="card-body">
-                <div className="list-group list-group-flush">
-                  <div className="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                      <i className="bi bi-person-plus text-success me-2"></i>
-                      Новый пользователь: Иван Петров (официант)
-                    </div>
-                    <small className="text-muted">10 минут назад</small>
-                  </div>
-                  <div className="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                      <i className="bi bi-egg-fried text-warning me-2"></i>
-                      Блюдо "Пицца Маргарита" поставлено на стоп
-                    </div>
-                    <small className="text-muted">1 час назад</small>
-                  </div>
-                  <div className="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                      <i className="bi bi-table text-info me-2"></i>
-                      Добавлен новый столик №15
-                    </div>
-                    <small className="text-muted">2 часа назад</small>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

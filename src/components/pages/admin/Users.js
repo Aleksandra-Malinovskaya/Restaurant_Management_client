@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { userAPI } from "../../../services/userAPI";
-import Header from "../../common/Header";
 
 const Users = () => {
   const { user: currentUser } = useAuth();
@@ -46,12 +46,21 @@ const Users = () => {
   });
   const [passwordErrors, setPasswordErrors] = useState({});
 
+  // Защита от null в currentUser
+  const isSuperAdmin = currentUser?.role === "super_admin";
+  const currentUserId = currentUser?.id;
+
   useEffect(() => {
+    // Если пользователь не авторизован, перенаправляем на страницу входа
+    if (!currentUser) {
+      navigate("/login");
+      return;
+    }
     loadUsers();
-  }, []);
+  }, [currentUser, navigate]);
 
   const handleBackToAdmin = () => {
-    navigate("/admin"); // Или тот путь, где у вас панель админа
+    navigate("/admin");
   };
 
   const loadUsers = async () => {
@@ -364,10 +373,24 @@ const Users = () => {
     setPasswordErrors({});
   };
 
+  // Если пользователь вышел, показываем только загрузку
+  if (!currentUser) {
+    return (
+      <div className="min-vh-100 bg-light">
+        <Navbar />
+        <div className="d-flex justify-content-center align-items-center vh-100">
+          <div className="spinner-border text-primary" role="status">
+            <span className="visually-hidden">Загрузка...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-vh-100 bg-light">
-        <Header />
+        <Navbar />
         <div className="d-flex justify-content-center align-items-center vh-100">
           <div className="spinner-border text-primary" role="status">
             <span className="visually-hidden">Загрузка...</span>
@@ -379,7 +402,7 @@ const Users = () => {
 
   return (
     <div className="min-vh-100 bg-light">
-      <Header />
+      <Navbar />
 
       <div className="container-fluid py-4">
         {/* Заголовок и кнопки */}
@@ -630,8 +653,8 @@ const Users = () => {
                           </td>
                           <td>{user.email}</td>
                           <td>
-                            {currentUser.role === "super_admin" &&
-                            user.role !== "super_admin" ? (
+                            {/* Исправленная проверка */}
+                            {isSuperAdmin && user.role !== "super_admin" ? (
                               <select
                                 className="form-select form-select-sm"
                                 value={user.role}
@@ -650,8 +673,8 @@ const Users = () => {
                             )}
                           </td>
                           <td>
-                            {currentUser.role === "super_admin" &&
-                            user.id !== currentUser.id ? (
+                            {/* Исправленная проверка */}
+                            {isSuperAdmin && user.id !== currentUserId ? (
                               <div className="form-check form-switch">
                                 <input
                                   className="form-check-input"
@@ -685,7 +708,7 @@ const Users = () => {
                                 onClick={() => handleEditUser(user)}
                                 disabled={
                                   user.role === "super_admin" &&
-                                  currentUser.id !== user.id
+                                  currentUserId !== user.id
                                 }
                                 title="Редактировать"
                               >
@@ -698,16 +721,16 @@ const Users = () => {
                               >
                                 <i className="bi bi-key"></i>
                               </button>
-                              {currentUser.role === "super_admin" &&
-                                user.id !== currentUser.id && (
-                                  <button
-                                    className="btn btn-outline-danger"
-                                    onClick={() => handleDeleteUser(user)}
-                                    title="Удалить"
-                                  >
-                                    <i className="bi bi-trash"></i>
-                                  </button>
-                                )}
+                              {/* Исправленная проверка */}
+                              {isSuperAdmin && user.id !== currentUserId && (
+                                <button
+                                  className="btn btn-outline-danger"
+                                  onClick={() => handleDeleteUser(user)}
+                                  title="Удалить"
+                                >
+                                  <i className="bi bi-trash"></i>
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -735,7 +758,7 @@ const Users = () => {
         </div>
       </div>
 
-      {/* Модальное окно создания пользователя */}
+      {/* Модальные окна */}
       {showCreateModal && (
         <div className="modal show d-block" tabIndex="-1">
           <div className="modal-dialog">
@@ -750,7 +773,6 @@ const Users = () => {
               </div>
               <form onSubmit={handleCreateUser}>
                 <div className="modal-body">
-                  {/* Ошибка формы */}
                   {createErrors.submit && (
                     <div className="alert alert-danger">
                       <i className="bi bi-exclamation-triangle me-2"></i>
@@ -927,7 +949,6 @@ const Users = () => {
               </div>
               <form onSubmit={handleUpdateUser}>
                 <div className="modal-body">
-                  {/* Ошибка формы */}
                   {editErrors.submit && (
                     <div className="alert alert-danger">
                       <i className="bi bi-exclamation-triangle me-2"></i>
@@ -1019,7 +1040,7 @@ const Users = () => {
                         <option value="chef">Повар</option>
                         <option value="trainee">Стажер</option>
                         <option value="admin">Администратор</option>
-                        {currentUser.role === "super_admin" && (
+                        {isSuperAdmin && (
                           <option value="super_admin">Супер-админ</option>
                         )}
                       </select>
@@ -1059,7 +1080,6 @@ const Users = () => {
               </div>
               <form onSubmit={handleChangePassword}>
                 <div className="modal-body">
-                  {/* Ошибка формы */}
                   {passwordErrors.submit && (
                     <div className="alert alert-danger">
                       <i className="bi bi-exclamation-triangle me-2"></i>

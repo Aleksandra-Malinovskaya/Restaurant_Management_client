@@ -18,9 +18,9 @@ import Trainee from "./pages/Trainee";
 
 // Админские страницы управления
 import Users from "./pages/admin/Users";
-// import Dishes from "./pages/admin/Dishes";
-// import Categories from "./pages/admin/Categories";
-// import Tables from "./pages/admin/Tables";
+import Dishes from "./pages/admin/Dishes";
+import Categories from "./pages/admin/Categories";
+import TablesManagement from "./pages/admin/TablesManagement";
 // import Statistics from "./pages/admin/Statistics";
 
 const AppRouter = () => {
@@ -73,10 +73,10 @@ const AppRouter = () => {
 
       {/* Админские страницы управления - ДОЛЖНЫ БЫТЬ ПОЛНЫЕ ПУТИ */}
       <Route path="/admin/users" element={<Users />} />
-      {/* <Route path="/admin/dishes" element={<Dishes />} />
+      <Route path="/admin/dishes" element={<Dishes />} />
       <Route path="/admin/categories" element={<Categories />} />
-      <Route path="/admin/tables" element={<Tables />} />
-      <Route path="/admin/statistics" element={<Statistics />} /> */}
+      <Route path="/admin/tables" element={<TablesManagement />} />
+      {/* <Route path="/admin/statistics" element={<Statistics />} /> */}
 
       {/* Запасной маршрут */}
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,8 +1,15 @@
 import React from "react";
 import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 const Navbar = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   const getRoleName = (role) => {
     const roles = {
@@ -63,7 +70,7 @@ const Navbar = () => {
                 <hr className="dropdown-divider" />
               </li>
               <li>
-                <button className="dropdown-item" onClick={logout}>
+                <button className="dropdown-item" onClick={handleLogout}>
                   <i className="bi bi-box-arrow-right me-2"></i>
                   Выйти
                 </button>
