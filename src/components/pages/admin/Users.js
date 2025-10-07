@@ -332,7 +332,7 @@ const Users = () => {
 
     try {
       await userAPI.update(selectedUser.id, {
-        password: passwordData.newPassword,
+        password: passwordData.newPassword, // Пароль передается правильно
       });
 
       setSuccess("Пароль успешно изменен");

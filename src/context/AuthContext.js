@@ -102,10 +102,23 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  // Функция для обновления данных пользователя
+  const updateUser = (newUserData) => {
+    setUser((prevUser) => ({
+      ...prevUser,
+      ...newUserData,
+    }));
+    // Также обновляем в localStorage
+    const updatedUser = { ...user, ...newUserData };
+    localStorage.setItem(USER_DATA, JSON.stringify(updatedUser));
+  };
+
   return (
     <AuthContext.Provider
       value={{
         user,
+        setUser, // Добавляем setUser
+        updateUser, // Добавляем updateUser
         isLoading,
         login,
         register,

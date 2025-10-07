@@ -89,7 +89,10 @@ const StatsPage = () => {
           requests.push(
             $authHost
               .get(`/stats/monthly?year=${filters.year}&month=${filters.month}`)
-              .then((res) => setMonthlyStats(res.data))
+              .then((res) => {
+                console.log("Monthly stats response:", res.data); // Для отладки
+                setMonthlyStats(res.data);
+              })
               .catch((err) => {
                 console.error("Ошибка загрузки месячной статистики:", err);
                 setMonthlyStats(null);
@@ -153,6 +156,12 @@ const StatsPage = () => {
   const safeNumber = (num, defaultValue = 0) => {
     if (num === null || num === undefined || isNaN(num)) return defaultValue;
     return num;
+  };
+
+  // Функция для расчета среднего чека
+  const calculateAverageCheck = (revenue, ordersCount) => {
+    if (!revenue || !ordersCount || ordersCount === 0) return 0;
+    return revenue / ordersCount;
   };
 
   // Рендер вкладки дневной статистики
@@ -405,7 +414,12 @@ const StatsPage = () => {
                               {formatNumber(day.dailyRevenue)}
                             </td>
                             <td className="text-info">
-                              {formatNumber(day.averageOrderValue)}
+                              {formatNumber(
+                                calculateAverageCheck(
+                                  day.dailyRevenue,
+                                  day.ordersCount
+                                )
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -441,6 +455,13 @@ const StatsPage = () => {
         </div>
       );
 
+    // Получаем данные для расчета среднего чека
+    const ordersTotal = monthlyStats.totals?.orders?.total || 0;
+    const ordersRevenue = monthlyStats.totals?.orders?.revenue || 0;
+    const averageOrderValue =
+      monthlyStats.totals?.orders?.averageOrderValue ||
+      calculateAverageCheck(ordersRevenue, ordersTotal);
+
     return (
       <div className="row">
         <div className="col-12">
@@ -459,7 +480,7 @@ const StatsPage = () => {
                   <div className="card border-primary">
                     <div className="card-body text-center">
                       <h4 className="text-primary">
-                        {formatNumber(monthlyStats.totals?.orders?.total)}
+                        {formatNumber(ordersTotal)}
                       </h4>
                       <small className="text-muted">Заказов</small>
                     </div>
@@ -469,7 +490,7 @@ const StatsPage = () => {
                   <div className="card border-success">
                     <div className="card-body text-center">
                       <h4 className="text-success">
-                        {formatNumber(monthlyStats.totals?.orders?.revenue)}
+                        {formatNumber(ordersRevenue)}
                       </h4>
                       <small className="text-muted">Выручка</small>
                     </div>
@@ -479,11 +500,7 @@ const StatsPage = () => {
                   <div className="card border-info">
                     <div className="card-body text-center">
                       <h4 className="text-info">
-                        {formatNumber(
-                          safeNumber(
-                            monthlyStats.totals?.orders?.averageOrderValue
-                          )
-                        )}
+                        {formatNumber(averageOrderValue)}
                       </h4>
                       <small className="text-muted">Средний чек</small>
                     </div>
@@ -542,24 +559,33 @@ const StatsPage = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {(monthlyStats.dailyStats || []).map((day) => (
-                          <tr key={day.date}>
-                            <td>
-                              {new Date(day.date).toLocaleDateString("ru-RU")}
-                            </td>
-                            <td>
-                              <span className="badge bg-primary">
-                                {formatNumber(day.ordersCount)}
-                              </span>
-                            </td>
-                            <td className="text-success fw-bold">
-                              {formatNumber(day.dailyRevenue)}
-                            </td>
-                            <td className="text-info">
-                              {formatNumber(safeNumber(day.averageOrderValue))}
-                            </td>
-                          </tr>
-                        ))}
+                        {(monthlyStats.dailyStats || []).map((day) => {
+                          const dayAverageCheck =
+                            day.averageOrderValue ||
+                            calculateAverageCheck(
+                              day.dailyRevenue,
+                              day.ordersCount
+                            );
+
+                          return (
+                            <tr key={day.date}>
+                              <td>
+                                {new Date(day.date).toLocaleDateString("ru-RU")}
+                              </td>
+                              <td>
+                                <span className="badge bg-primary">
+                                  {formatNumber(day.ordersCount)}
+                                </span>
+                              </td>
+                              <td className="text-success fw-bold">
+                                {formatNumber(day.dailyRevenue)}
+                              </td>
+                              <td className="text-info">
+                                {formatNumber(dayAverageCheck)}
+                              </td>
+                            </tr>
+                          );
+                        })}
                         {(monthlyStats.dailyStats || []).length === 0 && (
                           <tr>
                             <td
@@ -691,22 +717,31 @@ const StatsPage = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {(employeeStats.waiters || []).map((waiter) => (
-                        <tr key={waiter.waiterId}>
-                          <td>{waiter.waiterName}</td>
-                          <td>
-                            <span className="badge bg-primary">
-                              {formatNumber(waiter.totalOrders)}
-                            </span>
-                          </td>
-                          <td className="text-success fw-bold">
-                            {formatNumber(waiter.totalRevenue)}
-                          </td>
-                          <td className="text-info">
-                            {formatNumber(safeNumber(waiter.averageOrderValue))}
-                          </td>
-                        </tr>
-                      ))}
+                      {(employeeStats.waiters || []).map((waiter) => {
+                        const waiterAverageCheck =
+                          waiter.averageOrderValue ||
+                          calculateAverageCheck(
+                            waiter.totalRevenue,
+                            waiter.totalOrders
+                          );
+
+                        return (
+                          <tr key={waiter.waiterId}>
+                            <td>{waiter.waiterName}</td>
+                            <td>
+                              <span className="badge bg-primary">
+                                {formatNumber(waiter.totalOrders)}
+                              </span>
+                            </td>
+                            <td className="text-success fw-bold">
+                              {formatNumber(waiter.totalRevenue)}
+                            </td>
+                            <td className="text-info">
+                              {formatNumber(waiterAverageCheck)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

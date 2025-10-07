@@ -12,8 +12,8 @@ import {
 // Основные страницы
 import Auth from "./pages/Auth";
 import Admin from "./pages/admin/Admin";
-import Waiter from "./pages/Waiter";
-import Chef from "./pages/Chef";
+import Waiter from "./pages/waiter/Waiter";
+import Chef from "./pages/chef/Chef";
 import Trainee from "./pages/Trainee";
 
 // Админские страницы управления
@@ -22,6 +22,18 @@ import Dishes from "./pages/admin/Dishes";
 import Categories from "./pages/admin/Categories";
 import TablesManagement from "./pages/admin/TablesManagement";
 import Stats from "./pages/admin/Stats";
+
+// Страницы управления повара
+import ChefMenu from "./pages/chef/ChefMenu";
+import ChefOrders from "./pages/chef/ChefOrders";
+import ChefSettings from "./pages/chef/ChefSettings";
+import ChefHistory from "./pages/chef/ChefHistory";
+
+import WaiterSettings from "./pages/waiter/WaiterSettings";
+import WaiterMenu from "./pages/waiter/WaiterMenu";
+import WaiterTable from "./pages/waiter/WaiterTable";
+import WaiterReservations from "./pages/waiter/WaiterReservations";
+import WaiterTables from "./pages/waiter/WaiterTables";
 
 const AppRouter = () => {
   const { user } = useAuth();
@@ -77,6 +89,18 @@ const AppRouter = () => {
       <Route path="/admin/categories" element={<Categories />} />
       <Route path="/admin/tables" element={<TablesManagement />} />
       <Route path="/admin/statistics" element={<Stats />} />
+
+      <Route path="/chef" element={<Chef />} />
+      <Route path="/chef/orders" element={<ChefOrders />} />
+      <Route path="/chef/menu" element={<ChefMenu />} />
+      <Route path="/chef/history" element={<ChefHistory />} />
+      <Route path="/chef/settings" element={<ChefSettings />} />
+
+      <Route path="/waiter/settings" element={<WaiterSettings />} />
+      <Route path="/waiter/menu" element={<WaiterMenu />} />
+      <Route path="/waiter/table/:tableId" element={<WaiterTable />} />
+      <Route path="/waiter/tables" element={<WaiterTables />} />
+      <Route path="/waiter/reservations" element={<WaiterReservations />} />
 
       {/* Запасной маршрут */}
       <Route path="*" element={<Navigate to="/" replace />} />

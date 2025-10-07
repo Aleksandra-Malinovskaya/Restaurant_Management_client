@@ -131,16 +131,6 @@ const Admin = () => {
       console.error("Ошибка загрузки статистики:", error);
       const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
       setError(errorMessage);
-
-      // Fallback данные для демонстрации
-      setStats({
-        activeOrders: 12,
-        freeTables: 8,
-        todayReservations: 6,
-        stoppedDishes: 3,
-        activeEmployees: 9,
-        todayRevenue: 18750,
-      });
     } finally {
       setLoading(false);
     }
@@ -177,7 +167,7 @@ const Admin = () => {
       role: "admin",
     },
     {
-      title: "🪑 Столики",
+      title: "🪑 Столики и заказы",
       description: "Управление столиками и QR-кодами",
       path: "/admin/tables",
       color: "warning",
@@ -190,14 +180,6 @@ const Admin = () => {
       path: "/admin/statistics",
       color: "dark",
       icon: "bi-graph-up",
-      role: "admin",
-    },
-    {
-      title: "📋 Все заказы",
-      description: "Просмотр и управление заказами",
-      path: "/admin/orders",
-      color: "secondary",
-      icon: "bi-receipt",
       role: "admin",
     },
   ];
@@ -236,6 +218,8 @@ const Admin = () => {
       </div>
     );
   }
+
+  const availableCards = getAvailableCards();
 
   return (
     <div className="min-vh-100 bg-light">
@@ -386,9 +370,17 @@ const Admin = () => {
           </div>
         </div>
 
-        <div className="row g-3">
-          {getAvailableCards().map((card, index) => (
-            <div key={index} className="col-xl-4 col-lg-6 col-md-6">
+        {/* Адаптивная сетка карточек с центрированием */}
+        <div className="row g-3 justify-content-center">
+          {availableCards.map((card, index) => (
+            <div
+              key={index}
+              className={
+                availableCards.length === 2
+                  ? "col-xl-4 col-lg-5 col-md-6" // Для 2 карточек - более узкие колонки
+                  : "col-xl-4 col-lg-6 col-md-6" // Для остальных случаев
+              }
+            >
               <div
                 className={`card border-${card.color} shadow-sm h-100`}
                 style={{ cursor: "pointer", transition: "all 0.3s" }}
@@ -423,6 +415,51 @@ const Admin = () => {
             </div>
           ))}
         </div>
+
+        {/* Альтернативный вариант для центрирования 2 карточек */}
+        {availableCards.length === 2 && (
+          <div className="row g-3">
+            <div className="col-xl-3 col-lg-2"></div>{" "}
+            {/* Левое пустое пространство */}
+            {availableCards.map((card, index) => (
+              <div key={index} className="col-xl-3 col-lg-4 col-md-6">
+                <div
+                  className={`card border-${card.color} shadow-sm h-100`}
+                  style={{ cursor: "pointer", transition: "all 0.3s" }}
+                  onClick={() => handleCardClick(card.path)}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-5px)";
+                    e.currentTarget.style.boxShadow =
+                      "0 8px 25px rgba(0,0,0,0.15)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow =
+                      "0 2px 10px rgba(0,0,0,0.1)";
+                  }}
+                >
+                  <div className="card-body text-center">
+                    <i
+                      className={`bi ${card.icon} text-${card.color} display-4 mb-3`}
+                    ></i>
+                    <h5 className="card-title">{card.title}</h5>
+                    <p className="card-text text-muted">{card.description}</p>
+                  </div>
+                  <div
+                    className={`card-footer bg-${card.color} bg-opacity-10 text-center`}
+                  >
+                    <small className="text-muted">
+                      <i className="bi bi-arrow-right me-1"></i>
+                      Перейти к управлению
+                    </small>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="col-xl-3 col-lg-2"></div>{" "}
+            {/* Правое пустое пространство */}
+          </div>
+        )}
       </div>
     </div>
   );

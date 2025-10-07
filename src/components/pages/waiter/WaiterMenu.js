@@ -4,19 +4,19 @@ import { useNavigate } from "react-router-dom";
 import { dishAPI } from "../../../services/dishAPI";
 import { $authHost } from "../../../http";
 
-const ChefMenu = () => {
+const WaiterMenu = () => {
   const navigate = useNavigate();
   const [dishes, setDishes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
   const [pagination, setPagination] = useState({
     currentPage: 1,
     totalPages: 1,
     totalCount: 0,
-    limit: 9,
+    limit: 12,
   });
 
   const loadMenu = useCallback(
@@ -39,13 +39,18 @@ const ChefMenu = () => {
         const dishesData = dishesResponse.rows || dishesResponse.data || [];
         const categoriesData = categoriesResponse.data || [];
 
-        setDishes(dishesData);
+        // Фильтруем только активные блюда для официанта
+        const activeDishes = dishesData.filter(
+          (dish) => dish.isActive && !dish.isStopped
+        );
+
+        setDishes(activeDishes);
         setCategories(categoriesData);
         setPagination((prev) => ({
           ...prev,
           currentPage: page,
-          totalCount: dishesResponse.count || 0,
-          totalPages: Math.ceil((dishesResponse.count || 0) / prev.limit),
+          totalCount: activeDishes.length,
+          totalPages: Math.ceil(activeDishes.length / prev.limit),
         }));
       } catch (error) {
         console.error("Ошибка загрузки меню:", error);
@@ -57,39 +62,12 @@ const ChefMenu = () => {
     [selectedCategory, pagination.limit]
   );
 
-  const toggleDishStop = async (dish) => {
-    try {
-      // Используем тот же подход, что и в админской панели
-      await $authHost.put(`/dishes/${dish.id}`, {
-        isStopped: !dish.isStopped,
-        // Сохраняем остальные поля без изменений
-        name: dish.name,
-        price: dish.price,
-        categoryId: dish.categoryId,
-        ingredients: dish.ingredients,
-        allergens: dish.allergens,
-        nutritionInfo: dish.nutritionInfo,
-        cookingTimeMin: dish.cookingTimeMin,
-        isActive: dish.isActive,
-      });
-
-      setSuccess(
-        `Блюдо ${!dish.isStopped ? "поставлено на стоп" : "снято со стопа"}`
-      );
-      loadMenu(pagination.currentPage);
-    } catch (error) {
-      console.error("Ошибка изменения статуса блюда:", error);
-      console.error("Детали ошибки:", error.response?.data);
-      setError("Не удалось изменить статус блюда");
-    }
-  };
-
   useEffect(() => {
     loadMenu(1);
   }, [loadMenu]);
 
   const handleBack = () => {
-    navigate("/chef");
+    navigate("/waiter");
   };
 
   const handlePageChange = (newPage) => {
@@ -111,6 +89,13 @@ const ChefMenu = () => {
       minimumFractionDigits: 0,
     }).format(amount);
   };
+
+  // Фильтрация по поиску
+  const filteredDishes = dishes.filter(
+    (dish) =>
+      dish.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      dish.ingredients?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -140,7 +125,7 @@ const ChefMenu = () => {
                       <button
                         className="btn btn-outline-secondary me-3"
                         onClick={handleBack}
-                        title="Вернуться на панель повара"
+                        title="Вернуться на панель официанта"
                       >
                         <i className="bi bi-arrow-left"></i>
                       </button>
@@ -150,7 +135,7 @@ const ChefMenu = () => {
                           Меню ресторана
                         </h1>
                         <p className="text-muted mb-0">
-                          Просмотр и управление доступностью блюд
+                          Просмотр доступных блюд и их состава
                         </p>
                       </div>
                     </div>
@@ -181,25 +166,29 @@ const ChefMenu = () => {
           </div>
         )}
 
-        {success && (
-          <div className="row mb-4">
-            <div className="col-12">
-              <div className="alert alert-success">
-                <i className="bi bi-check-circle me-2"></i>
-                {success}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Фильтр по категориям */}
+        {/* Фильтры */}
         <div className="row mb-4">
           <div className="col-12">
             <div className="card">
               <div className="card-body">
-                <div className="row g-3 align-items-center">
-                  <div className="col-md-4">
-                    <label className="form-label">Фильтр по категории</label>
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <label className="form-label">Поиск блюд</label>
+                    <div className="input-group">
+                      <span className="input-group-text">
+                        <i className="bi bi-search"></i>
+                      </span>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Название блюда или ингредиенты..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label">Категория</label>
                     <select
                       className="form-select"
                       value={selectedCategory}
@@ -213,25 +202,6 @@ const ChefMenu = () => {
                       ))}
                     </select>
                   </div>
-                  <div className="col-md-8">
-                    <div className="d-flex flex-wrap gap-2">
-                      {categories.map((category) => (
-                        <button
-                          key={category.id}
-                          className={`btn btn-sm ${
-                            selectedCategory === category.id.toString()
-                              ? "btn-primary"
-                              : "btn-outline-primary"
-                          }`}
-                          onClick={() =>
-                            setSelectedCategory(category.id.toString())
-                          }
-                        >
-                          {category.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -244,7 +214,7 @@ const ChefMenu = () => {
             <div className="card">
               <div className="card-header bg-white d-flex justify-content-between align-items-center">
                 <h5 className="card-title mb-0">
-                  Список блюд ({pagination.totalCount})
+                  Доступные блюда ({filteredDishes.length})
                 </h5>
                 {pagination.totalPages > 1 && (
                   <div className="d-flex align-items-center">
@@ -279,13 +249,9 @@ const ChefMenu = () => {
               </div>
               <div className="card-body">
                 <div className="row g-3">
-                  {dishes.map((dish) => (
-                    <div key={dish.id} className="col-md-6 col-lg-4">
-                      <div
-                        className={`card h-100 ${
-                          dish.isStopped ? "border-danger" : "border-success"
-                        }`}
-                      >
+                  {filteredDishes.map((dish) => (
+                    <div key={dish.id} className="col-md-6 col-lg-4 col-xl-3">
+                      <div className="card h-100 border-success">
                         <div className="position-relative">
                           {dish.imgUrl ? (
                             <img
@@ -313,18 +279,14 @@ const ChefMenu = () => {
                             </div>
                           )}
                           <div className="position-absolute top-0 end-0 m-2">
-                            {dish.isStopped ? (
-                              <span className="badge bg-danger">На стопе</span>
-                            ) : (
-                              <span className="badge bg-success">Доступно</span>
-                            )}
+                            <span className="badge bg-success">Доступно</span>
                           </div>
                         </div>
                         <div className="card-body">
                           <h5 className="card-title">{dish.name}</h5>
 
                           <p className="card-text text-muted small">
-                            {dish.description || "Описание отсутствует"}
+                            {dish.ingredients || "Описание отсутствует"}
                           </p>
 
                           <div className="mb-2">
@@ -340,42 +302,51 @@ const ChefMenu = () => {
                           </div>
 
                           {dish.cookingTimeMin && (
-                            <div className="mb-3">
+                            <div className="mb-2">
                               <small className="text-muted">
                                 <i className="bi bi-clock me-1"></i>
-                                Время приготовления: {dish.cookingTimeMin} мин
+                                Приготовление: {dish.cookingTimeMin} мин
+                              </small>
+                            </div>
+                          )}
+
+                          {dish.allergens && (
+                            <div className="mb-2">
+                              <small className="text-warning">
+                                <i className="bi bi-exclamation-triangle me-1"></i>
+                                Аллергены: {dish.allergens}
+                              </small>
+                            </div>
+                          )}
+
+                          {dish.nutritionInfo && (
+                            <div className="mb-2">
+                              <small className="text-info">
+                                <i className="bi bi-info-circle me-1"></i>
+                                {dish.nutritionInfo}
                               </small>
                             </div>
                           )}
                         </div>
-                        <div className="card-footer">
-                          <button
-                            className={`btn btn-sm w-100 ${
-                              dish.isStopped ? "btn-success" : "btn-warning"
-                            }`}
-                            onClick={() => toggleDishStop(dish)}
-                          >
-                            <i
-                              className={`bi bi-${
-                                dish.isStopped ? "play" : "pause"
-                              } me-1`}
-                            ></i>
-                            {dish.isStopped
-                              ? "Снять со стопа"
-                              : "Поставить на стоп"}
-                          </button>
+                        <div className="card-footer bg-success bg-opacity-10">
+                          <small className="text-success">
+                            <i className="bi bi-check-circle me-1"></i>
+                            Доступно для заказа
+                          </small>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                {dishes.length === 0 && (
+                {filteredDishes.length === 0 && (
                   <div className="text-center py-5">
-                    <i className="bi bi-egg display-1 text-muted"></i>
+                    <i className="bi bi-search display-1 text-muted"></i>
                     <h5 className="mt-3 text-muted">Блюда не найдены</h5>
                     <p className="text-muted">
-                      Попробуйте выбрать другую категорию
+                      {searchTerm
+                        ? "Попробуйте изменить поисковый запрос"
+                        : "Попробуйте выбрать другую категорию"}
                     </p>
                   </div>
                 )}
@@ -440,9 +411,76 @@ const ChefMenu = () => {
             </div>
           </div>
         </div>
+
+        {/* Категории с карточками */}
+        <div className="row mt-4">
+          {categories.map((category) => {
+            const categoryDishes = filteredDishes.filter(
+              (dish) => dish.category?.id === category.id
+            );
+
+            if (categoryDishes.length === 0) return null;
+
+            return (
+              <div key={category.id} className="col-12 mb-4">
+                <div className="card">
+                  <div className="card-header bg-primary text-white">
+                    <h5 className="mb-0">
+                      {category.name} ({categoryDishes.length})
+                    </h5>
+                  </div>
+                  <div className="card-body">
+                    <div className="row g-3">
+                      {categoryDishes.map((dish) => (
+                        <div
+                          key={dish.id}
+                          className="col-xl-3 col-lg-4 col-md-6"
+                        >
+                          <div className="card h-100">
+                            {dish.imgUrl && (
+                              <img
+                                src={getImageUrl(dish.imgUrl)}
+                                alt={dish.name}
+                                className="card-img-top"
+                                style={{ height: "200px", objectFit: "cover" }}
+                              />
+                            )}
+                            <div className="card-body">
+                              <h6 className="card-title">{dish.name}</h6>
+                              <p className="card-text small text-muted">
+                                {dish.ingredients || "Описание отсутствует"}
+                              </p>
+                              {dish.allergens && (
+                                <p className="card-text">
+                                  <small className="text-warning">
+                                    <strong>Аллергены:</strong> {dish.allergens}
+                                  </small>
+                                </p>
+                              )}
+                            </div>
+                            <div className="card-footer">
+                              <div className="d-flex justify-content-between align-items-center">
+                                <span className="h5 mb-0 text-primary">
+                                  {formatCurrency(dish.price)}
+                                </span>
+                                <span className="badge bg-info">
+                                  {dish.cookingTimeMin || 15} мин.
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 };
 
-export default ChefMenu;
+export default WaiterMenu;

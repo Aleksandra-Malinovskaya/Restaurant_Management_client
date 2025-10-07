@@ -59,28 +59,19 @@ const ChefMenu = () => {
 
   const toggleDishStop = async (dish) => {
     try {
-      // Используем тот же подход, что и в админской панели
-      await $authHost.put(`/dishes/${dish.id}`, {
-        isStopped: !dish.isStopped,
-        // Сохраняем остальные поля без изменений
-        name: dish.name,
-        price: dish.price,
-        categoryId: dish.categoryId,
-        ingredients: dish.ingredients,
-        allergens: dish.allergens,
-        nutritionInfo: dish.nutritionInfo,
-        cookingTimeMin: dish.cookingTimeMin,
-        isActive: dish.isActive,
-      });
+      // Используем метод toggleStop из API
+      await dishAPI.toggleStop(dish.id);
 
       setSuccess(
-        `Блюдо ${!dish.isStopped ? "поставлено на стоп" : "снято со стопа"}`
+        `Блюдо ${dish.isStopped ? "снято со стопа" : "поставлено на стоп"}`
       );
       loadMenu(pagination.currentPage);
     } catch (error) {
       console.error("Ошибка изменения статуса блюда:", error);
       console.error("Детали ошибки:", error.response?.data);
-      setError("Не удалось изменить статус блюда");
+      setError(
+        error.response?.data?.message || "Не удалось изменить статус блюда"
+      );
     }
   };
 
@@ -354,15 +345,25 @@ const ChefMenu = () => {
                               dish.isStopped ? "btn-success" : "btn-warning"
                             }`}
                             onClick={() => toggleDishStop(dish)}
+                            disabled={loading}
                           >
-                            <i
-                              className={`bi bi-${
-                                dish.isStopped ? "play" : "pause"
-                              } me-1`}
-                            ></i>
-                            {dish.isStopped
-                              ? "Снять со стопа"
-                              : "Поставить на стоп"}
+                            {loading ? (
+                              <>
+                                <span className="spinner-border spinner-border-sm me-2" />
+                                Загрузка...
+                              </>
+                            ) : (
+                              <>
+                                <i
+                                  className={`bi bi-${
+                                    dish.isStopped ? "play" : "pause"
+                                  } me-1`}
+                                ></i>
+                                {dish.isStopped
+                                  ? "Снять со стопа"
+                                  : "Поставить на стоп"}
+                              </>
+                            )}
                           </button>
                         </div>
                       </div>

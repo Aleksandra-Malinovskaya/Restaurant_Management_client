@@ -9,29 +9,34 @@ const TablesManagement = () => {
   const [orders, setOrders] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [waiters, setWaiters] = useState([]);
+  const [dishes, setDishes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [showTableModal, setShowTableModal] = useState(false);
   const [showReservationModal, setShowReservationModal] = useState(false);
+  const [showOrderModal, setShowOrderModal] = useState(false);
   const [editingTable, setEditingTable] = useState(null);
   const [editingReservation, setEditingReservation] = useState(null);
   const [selectedTable, setSelectedTable] = useState(null);
-  const [view, setView] = useState("grid");
-  const [currentDate, setCurrentDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
-  const [deleteCheck, setDeleteCheck] = useState({
-    open: false,
-    table: null,
-    conflicts: null,
-  });
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [activeTab, setActiveTab] = useState("tables");
 
-  // Фильтры
-  const [filters, setFilters] = useState({
+  // Фильтры для разных вкладок
+  const [tableFilters, setTableFilters] = useState({
     status: "all",
     capacity: "all",
     search: "",
+  });
+
+  const [orderFilters, setOrderFilters] = useState({
+    status: "all",
+    search: "",
+  });
+
+  const [reservationFilters, setReservationFilters] = useState({
+    status: "all",
+    date: new Date().toISOString().split("T")[0],
   });
 
   const [tableForm, setTableForm] = useState({
@@ -48,7 +53,19 @@ const TablesManagement = () => {
     status: "confirmed",
   });
 
-  // Функция для преобразования времени с учетом часового пояса (для отображения)
+  const [orderForm, setOrderForm] = useState({
+    waiterId: "",
+    status: "open",
+    items: [],
+  });
+
+  const [newOrderItem, setNewOrderItem] = useState({
+    dishId: "",
+    quantity: 1,
+    notes: "",
+  });
+
+  // Функция для преобразования времени с учетом часового пояса
   const toLocalISOString = (date) => {
     if (!date) return "";
     const localDate = new Date(date);
@@ -58,14 +75,12 @@ const TablesManagement = () => {
       .slice(0, 16);
   };
 
-  // Функция для преобразования времени из UTC в локальное (для отображения)
   const fromUTCToLocal = (utcDate) => {
     if (!utcDate) return null;
     const date = new Date(utcDate);
     return date;
   };
 
-  // Функция для преобразования времени из локального в UTC (для отправки на сервер)
   const fromLocalToUTC = (localDate) => {
     if (!localDate) return null;
     const date = new Date(localDate);
@@ -127,92 +142,69 @@ const TablesManagement = () => {
         }
         setError("");
 
-        // Загружаем данные последовательно для лучшей обработки ошибок
         let loadedTables = [];
         let loadedOrders = [];
         let loadedReservations = [];
         let loadedWaiters = [];
+        let loadedDishes = [];
 
         try {
-          console.log("Загрузка столиков...");
           const tablesResponse = await $authHost.get("/tables");
           loadedTables = safeArray(extractData(tablesResponse.data));
-          console.log(`Загружено столиков: ${loadedTables.length}`);
         } catch (err) {
           console.error("Ошибка загрузки столиков:", err);
           loadedTables = [];
         }
 
         try {
-          console.log("Загрузка заказов...");
-          // Разделяем запросы по статусам для избежания ошибок
-          const openOrdersResponse = await $authHost.get("/orders?status=open");
-          const inProgressOrdersResponse = await $authHost.get(
-            "/orders?status=in_progress"
-          );
-          const readyOrdersResponse = await $authHost.get(
-            "/orders?status=ready"
-          );
-
-          const openOrders = safeArray(extractData(openOrdersResponse.data));
-          const inProgressOrders = safeArray(
-            extractData(inProgressOrdersResponse.data)
-          );
-          const readyOrders = safeArray(extractData(readyOrdersResponse.data));
-
-          loadedOrders = [...openOrders, ...inProgressOrders, ...readyOrders];
-          console.log(
-            `Загружено заказов: ${loadedOrders.length} (open: ${openOrders.length}, in_progress: ${inProgressOrders.length}, ready: ${readyOrders.length})`
+          // Загружаем все активные заказы
+          const allOrdersResponse = await $authHost.get("/orders");
+          loadedOrders = safeArray(extractData(allOrdersResponse.data));
+          // Фильтруем только активные заказы
+          loadedOrders = loadedOrders.filter((order) =>
+            ["open", "in_progress", "ready"].includes(order.status)
           );
         } catch (err) {
           console.error("Ошибка загрузки заказов:", err);
-          // Пробуем загрузить все заказы без фильтрации
-          try {
-            const allOrdersResponse = await $authHost.get("/orders");
-            loadedOrders = safeArray(extractData(allOrdersResponse.data));
-            console.log(`Загружено всех заказов: ${loadedOrders.length}`);
-          } catch (fallbackErr) {
-            console.error("Ошибка загрузки всех заказов:", fallbackErr);
-            loadedOrders = [];
-          }
+          loadedOrders = [];
         }
 
         try {
-          console.log("Загрузка бронирований...");
           const reservationsResponse = await $authHost.get("/reservations");
           loadedReservations = safeArray(
             extractData(reservationsResponse.data)
           );
-          console.log(`Загружено бронирований: ${loadedReservations.length}`);
         } catch (err) {
           console.error("Ошибка загрузки бронирований:", err);
           loadedReservations = [];
         }
 
         try {
-          console.log("Загрузка официантов...");
-          const usersResponse = await $authHost.get("/users?role=waiter");
-          loadedWaiters = safeArray(extractData(usersResponse.data));
-          console.log(`Загружено официантов: ${loadedWaiters.length}`);
+          // Загружаем только официантов и админов
+          const usersResponse = await $authHost.get("/users");
+          const allUsers = safeArray(extractData(usersResponse.data));
+          // Фильтруем только официантов и админов
+          loadedWaiters = allUsers.filter(
+            (user) => user.role === "waiter" || user.role === "admin"
+          );
         } catch (err) {
           console.error("Ошибка загрузки официантов:", err);
           loadedWaiters = [];
         }
 
-        // Устанавливаем состояния
+        try {
+          const dishesResponse = await $authHost.get("/dishes");
+          loadedDishes = safeArray(extractData(dishesResponse.data));
+        } catch (err) {
+          console.error("Ошибка загрузки блюд:", err);
+          loadedDishes = [];
+        }
+
         setTables(loadedTables);
         setOrders(loadedOrders);
         setReservations(loadedReservations);
         setWaiters(loadedWaiters);
-
-        // Проверяем, есть ли вообще данные
-        const totalLoaded =
-          loadedTables.length + loadedOrders.length + loadedReservations.length;
-        if (totalLoaded === 0 && !silent) {
-          setError(
-            "Не удалось загрузить данные. Проверьте подключение к серверу."
-          );
-        }
+        setDishes(loadedDishes);
 
         // Автоматическое обновление статусов завершенных бронирований
         try {
@@ -220,9 +212,6 @@ const TablesManagement = () => {
             loadedReservations
           );
           if (hasUpdates) {
-            console.log(
-              "Обнаружены обновления статусов, перезагружаем данные..."
-            );
             setTimeout(() => loadData(true), 1000);
           }
         } catch (updateErr) {
@@ -251,15 +240,12 @@ const TablesManagement = () => {
     loadData();
   }, [loadData]);
 
-  // Отдельный эффект для периодического обновления статусов
+  // Периодическое обновление статусов
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const hasUpdates = await updateCompletedReservations(reservations);
         if (hasUpdates) {
-          console.log(
-            "Автоматическое обновление статусов, перезагружаем данные..."
-          );
           await loadData(true);
         }
       } catch (error) {
@@ -283,12 +269,6 @@ const TablesManagement = () => {
     );
   };
 
-  const getTableReservations = (tableId) => {
-    return reservations.filter(
-      (reservation) => reservation.tableId === tableId
-    );
-  };
-
   const getCurrentReservation = (tableId) => {
     const now = new Date();
     return reservations.find(
@@ -300,44 +280,16 @@ const TablesManagement = () => {
     );
   };
 
-  // НОВАЯ ФУНКЦИЯ: Получение бронирований для отфильтрованных столиков
-  const getFilteredReservations = () => {
-    if (filteredTables.length === 0) {
-      return [];
-    }
-
-    // Получаем ID всех отфильтрованных столиков
-    const filteredTableIds = filteredTables.map((table) => table.id);
-
-    // Фильтруем бронирования по ID столиков и выбранной дате
-    return reservations.filter((reservation) => {
-      const reservationDate = fromUTCToLocal(reservation.reservedFrom)
-        .toISOString()
-        .split("T")[0];
-      return (
-        filteredTableIds.includes(reservation.tableId) &&
-        reservationDate === currentDate
-      );
-    });
-  };
-
-  // Улучшенная функция определения статуса столика
   const getTableStatus = (table) => {
     const tableOrders = getTableOrders(table.id);
     const currentReservation = getCurrentReservation(table.id);
 
-    // Если есть активные заказы - столик занят
     if (tableOrders.length > 0) return "occupied";
-
-    // Если гости уже за столом (статус seated) - столик занят
     if (currentReservation && currentReservation.status === "seated")
       return "occupied";
-
-    // Если есть подтвержденное бронирование - забронирован
     if (currentReservation && currentReservation.status === "confirmed")
       return "reserved";
 
-    // Проверяем ближайшие бронирования (в течение 30 минут)
     const now = new Date();
     const soon = new Date(now.getTime() + 30 * 60000);
     const upcomingReservation = reservations.find(
@@ -352,24 +304,81 @@ const TablesManagement = () => {
     return "free";
   };
 
-  // Фильтрация столиков
+  const canCreateOrder = (tableId) => {
+    const tableOrders = getTableOrders(tableId);
+    return tableOrders.length === 0;
+  };
+
+  const getActiveOrder = (tableId) => {
+    const tableOrders = getTableOrders(tableId);
+    return tableOrders.length > 0 ? tableOrders[0] : null;
+  };
+
+  // Функция для получения цены блюда
+  const getItemPrice = (item) => {
+    const price = item.price || item.itemPrice || 0;
+    return Number(price) || 0;
+  };
+
+  // Функция для получения названия блюда
+  const getItemName = (item) => {
+    return item.dish?.name || item.name || "Неизвестное блюдо";
+  };
+
+  // Функция для расчета суммы заказа - ИСПРАВЛЕННАЯ
+  const calculateOrderTotal = (orderItems) => {
+    if (!orderItems || !Array.isArray(orderItems)) return 0;
+
+    const total = orderItems.reduce((total, item) => {
+      const price = getItemPrice(item);
+      const quantity = Number(item.quantity) || 0;
+      return total + price * quantity;
+    }, 0);
+
+    return total;
+  };
+
+  // Фильтрация для разных вкладок
   const filteredTables = tables.filter((table) => {
     const status = getTableStatus(table);
-    const matchesStatus = filters.status === "all" || status === filters.status;
+    const matchesStatus =
+      tableFilters.status === "all" || status === tableFilters.status;
     const matchesCapacity =
-      filters.capacity === "all" ||
-      table.capacity >= parseInt(filters.capacity);
+      tableFilters.capacity === "all" ||
+      table.capacity >= parseInt(tableFilters.capacity);
     const matchesSearch =
-      filters.search === "" ||
-      table.name.toLowerCase().includes(filters.search.toLowerCase());
+      tableFilters.search === "" ||
+      table.name.toLowerCase().includes(tableFilters.search.toLowerCase());
 
     return matchesStatus && matchesCapacity && matchesSearch;
   });
 
-  // Фильтрация бронирований для отфильтрованных столиков
-  const filteredReservations = getFilteredReservations();
+  const filteredOrders = orders.filter((order) => {
+    const matchesStatus =
+      orderFilters.status === "all" || order.status === orderFilters.status;
+    const table = tables.find((t) => t.id === order.tableId);
+    const matchesSearch =
+      orderFilters.search === "" ||
+      (table &&
+        table.name.toLowerCase().includes(orderFilters.search.toLowerCase())) ||
+      order.id.toString().includes(orderFilters.search);
 
-  // Столики
+    return matchesStatus && matchesSearch;
+  });
+
+  const filteredReservations = reservations.filter((reservation) => {
+    const reservationDate = fromUTCToLocal(reservation.reservedFrom)
+      .toISOString()
+      .split("T")[0];
+    const matchesDate = reservationDate === reservationFilters.date;
+    const matchesStatus =
+      reservationFilters.status === "all" ||
+      reservation.status === reservationFilters.status;
+
+    return matchesDate && matchesStatus;
+  });
+
+  // Функции для столиков
   const handleAddTable = () => {
     setEditingTable(null);
     setTableForm({ name: "", capacity: 2 });
@@ -382,42 +391,8 @@ const TablesManagement = () => {
     setShowTableModal(true);
   };
 
-  // Проверка конфликтов при удалении столика
-  const checkTableConflicts = async (tableId) => {
-    const now = new Date();
-
-    // Проверяем активные заказы
-    const activeOrders = orders.filter(
-      (order) =>
-        order.tableId === tableId &&
-        ["open", "in_progress", "ready"].includes(order.status)
-    );
-
-    // Проверяем будущие бронирования
-    const futureReservations = reservations.filter(
-      (reservation) =>
-        reservation.tableId === tableId &&
-        fromUTCToLocal(reservation.reservedFrom) > now &&
-        ["confirmed", "seated"].includes(reservation.status)
-    );
-
-    return {
-      hasConflicts: activeOrders.length > 0 || futureReservations.length > 0,
-      activeOrders,
-      futureReservations,
-    };
-  };
-
   const handleDeleteTable = async (table) => {
     try {
-      // Проверяем конфликты перед удалением
-      const conflicts = await checkTableConflicts(table.id);
-
-      if (conflicts.hasConflicts) {
-        setDeleteCheck({ open: true, table, conflicts });
-        return;
-      }
-
       if (
         !window.confirm(
           `Вы уверены, что хотите удалить столик "${table.name}"?`
@@ -428,42 +403,7 @@ const TablesManagement = () => {
 
       await $authHost.delete(`/tables/${table.id}`);
       await loadData();
-      setError("");
       setSuccess("Столик успешно удален");
-    } catch (error) {
-      console.error("Ошибка удаления столика:", error);
-      setError("Не удалось удалить столик");
-    }
-  };
-
-  // Удаление столика вместе с бронированиями
-  const confirmDeleteTable = async (tableId) => {
-    try {
-      // Сначала удаляем все бронирования этого столика
-      const tableReservations = reservations.filter(
-        (r) => r.tableId === tableId
-      );
-
-      for (const reservation of tableReservations) {
-        try {
-          await $authHost.delete(`/reservations/${reservation.id}`);
-          console.log(
-            `Удалено бронирование ${reservation.id} для столика ${tableId}`
-          );
-        } catch (error) {
-          console.error(
-            `Ошибка удаления бронирования ${reservation.id}:`,
-            error
-          );
-        }
-      }
-
-      // Затем удаляем сам столик
-      await $authHost.delete(`/tables/${tableId}`);
-      setDeleteCheck({ open: false, table: null, conflicts: null });
-      await loadData();
-      setError("");
-      setSuccess("Столик и связанные бронирования успешно удалены");
     } catch (error) {
       console.error("Ошибка удаления столика:", error);
       setError("Не удалось удалить столик");
@@ -473,7 +413,6 @@ const TablesManagement = () => {
   const handleTableSubmit = async (e) => {
     e.preventDefault();
     try {
-      // Проверяем уникальность имени столика
       const existingTable = tables.find(
         (table) =>
           table.name.toLowerCase() === tableForm.name.toLowerCase() &&
@@ -494,29 +433,24 @@ const TablesManagement = () => {
       }
       setShowTableModal(false);
       await loadData();
-      setError("");
     } catch (error) {
       console.error("Ошибка сохранения столика:", error);
-      if (error.response?.data?.message?.includes("unique")) {
-        setError(`Столик с именем "${tableForm.name}" уже существует`);
-      } else {
-        setError(`Не удалось ${editingTable ? "обновить" : "добавить"} столик`);
-      }
+      setError(`Не удалось ${editingTable ? "обновить" : "добавить"} столик`);
     }
   };
 
-  // Бронирования
-  const handleAddReservation = (table) => {
+  // Функции для бронирований
+  const handleAddReservation = (table = null) => {
     setSelectedTable(table);
     setEditingReservation(null);
     const now = new Date();
-    const from = new Date(now.getTime() + 30 * 60000); // +30 минут
-    const to = new Date(from.getTime() + 2 * 60 * 60000); // +2 часа
+    const from = new Date(now.getTime() + 30 * 60000);
+    const to = new Date(from.getTime() + 2 * 60 * 60000);
 
     setReservationForm({
       customerName: "",
       customerPhone: "",
-      guestCount: Math.min(table.capacity, 2),
+      guestCount: table ? Math.min(table.capacity, 2) : 2,
       reservedFrom: toLocalISOString(from),
       reservedTo: toLocalISOString(to),
       status: "confirmed",
@@ -548,7 +482,6 @@ const TablesManagement = () => {
     try {
       await $authHost.delete(`/reservations/${reservation.id}`);
       await loadData();
-      setError("");
       setSuccess("Бронирование успешно удалено");
     } catch (error) {
       console.error("Ошибка удаления бронирования:", error);
@@ -556,7 +489,6 @@ const TablesManagement = () => {
     }
   };
 
-  // Проверка доступности столика для бронирования через API
   const checkTableAvailability = async (
     tableId,
     reservedFrom,
@@ -570,12 +502,9 @@ const TablesManagement = () => {
         reservedTo: fromLocalToUTC(reservedTo),
       };
 
-      // Добавляем excludeReservationId только если он указан
       if (excludeReservationId) {
         params.excludeReservationId = excludeReservationId;
       }
-
-      console.log("Checking availability with params:", params);
 
       const response = await $authHost.get("/reservations/available", {
         params: params,
@@ -590,18 +519,20 @@ const TablesManagement = () => {
   const handleReservationSubmit = async (e) => {
     e.preventDefault();
     try {
-      // Используем API для проверки доступности
+      if (!selectedTable) {
+        setError("Выберите столик для бронирования");
+        return;
+      }
+
       const isAvailable = await checkTableAvailability(
         selectedTable.id,
         reservationForm.reservedFrom,
         reservationForm.reservedTo,
-        editingReservation?.id // ← ПЕРЕДАЕМ ID ТЕКУЩЕГО БРОНИРОВАНИЯ
+        editingReservation?.id
       );
 
       if (!isAvailable) {
-        setError(
-          "Столик уже занят на выбранное время. Выберите другое время или столик."
-        );
+        setError("Столик уже занят на выбранное время");
         return;
       }
 
@@ -611,8 +542,6 @@ const TablesManagement = () => {
         reservedFrom: fromLocalToUTC(reservationForm.reservedFrom),
         reservedTo: fromLocalToUTC(reservationForm.reservedTo),
       };
-
-      console.log("Отправка данных бронирования:", submitData);
 
       if (editingReservation) {
         await $authHost.put(
@@ -626,33 +555,209 @@ const TablesManagement = () => {
       }
       setShowReservationModal(false);
       await loadData();
-      setError("");
     } catch (error) {
       console.error("Ошибка сохранения бронирования:", error);
-      const errorMessage = error.response?.data?.message || error.message;
+      setError("Не удалось сохранить бронирование");
+    }
+  };
 
-      if (
-        errorMessage.includes("Столик занят") ||
-        errorMessage.includes("занят")
-      ) {
-        setError(
-          "Столик уже занят на выбранное время. Выберите другое время или столик."
-        );
-      } else if (
-        errorMessage.includes("вместимость") ||
-        errorMessage.includes("capacity")
-      ) {
-        setError("Превышена вместимость столика");
+  // Функции для заказов - ИСПРАВЛЕННЫЕ
+  const handleViewOrder = (order) => {
+    const table = tables.find((t) => t.id === order.tableId);
+    if (table) {
+      setSelectedOrder(order);
+      setSelectedTable(table);
+
+      // Преобразуем данные для отображения
+      const transformedItems = (order.items || []).map((item) => ({
+        ...item,
+        // Добавляем price если его нет
+        price: getItemPrice(item),
+        // Добавляем dish если его нет
+        dish: item.dish || { name: getItemName(item) },
+      }));
+
+      setOrderForm({
+        waiterId: order.waiterId || "",
+        status: order.status,
+        items: transformedItems,
+      });
+      setShowOrderModal(true);
+    }
+  };
+
+  const handleCreateOrder = (table) => {
+    if (!canCreateOrder(table.id)) {
+      setError("На столике уже есть активный заказ");
+      return;
+    }
+
+    setSelectedOrder(null);
+    setSelectedTable(table);
+    setOrderForm({
+      waiterId: "",
+      status: "open",
+      items: [],
+    });
+    setNewOrderItem({
+      dishId: "",
+      quantity: 1,
+      notes: "",
+    });
+    setShowOrderModal(true);
+  };
+
+  const handleAddOrderItem = () => {
+    if (!newOrderItem.dishId) {
+      setError("Выберите блюдо");
+      return;
+    }
+
+    const selectedDish = dishes.find(
+      (dish) => dish.id === parseInt(newOrderItem.dishId)
+    );
+    if (!selectedDish) {
+      setError("Блюдо не найдено");
+      return;
+    }
+
+    const newItem = {
+      id: Date.now(),
+      dishId: parseInt(newOrderItem.dishId),
+      dish: selectedDish,
+      quantity: newOrderItem.quantity,
+      notes: newOrderItem.notes,
+      status: "ordered",
+      price: selectedDish.price,
+      itemPrice: selectedDish.price, // Добавляем и itemPrice для совместимости
+    };
+
+    setOrderForm((prev) => ({
+      ...prev,
+      items: [...prev.items, newItem],
+    }));
+
+    setNewOrderItem({
+      dishId: "",
+      quantity: 1,
+      notes: "",
+    });
+  };
+
+  const handleRemoveOrderItem = (index) => {
+    setOrderForm((prev) => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index),
+    }));
+  };
+
+  // ИСПРАВЛЕННАЯ функция сохранения заказа
+  const handleOrderSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (!orderForm.waiterId) {
+        setError("Выберите официанта");
+        return;
+      }
+
+      if (orderForm.items.length === 0) {
+        setError("Добавьте хотя бы одно блюдо в заказ");
+        return;
+      }
+
+      const orderData = {
+        tableId: selectedTable.id,
+        waiterId: parseInt(orderForm.waiterId),
+        status: orderForm.status,
+        items: orderForm.items.map((item) => ({
+          dishId: item.dishId,
+          quantity: item.quantity,
+          notes: item.notes,
+          price: item.price,
+        })),
+      };
+
+      console.log("Отправка заказа:", orderData);
+
+      if (selectedOrder) {
+        // Обновление существующего заказа
+        await $authHost.put(`/orders/${selectedOrder.id}`, orderData);
+        setSuccess("Заказ успешно обновлен");
       } else {
-        setError(
-          `Не удалось ${
-            editingReservation ? "обновить" : "добавить"
-          } бронирование: ${errorMessage}`
-        );
+        // Создание нового заказа
+        await $authHost.post("/orders", orderData);
+        setSuccess("Заказ успешно создан");
+      }
+
+      setShowOrderModal(false);
+      await loadData();
+    } catch (error) {
+      console.error("Ошибка сохранения заказа:", error);
+      console.error("Детали ошибки:", error.response?.data);
+      setError(
+        `Не удалось ${selectedOrder ? "обновить" : "создать"} заказ: ${
+          error.response?.data?.message || error.message
+        }`
+      );
+    }
+  };
+
+  const handleOrderStatusChange = async (orderId, newStatus) => {
+    try {
+      await $authHost.put(`/orders/${orderId}/status`, { status: newStatus });
+      setSuccess("Статус заказа обновлен");
+      await loadData();
+    } catch (error) {
+      console.error("Ошибка изменения статуса заказа:", error);
+      setError("Не удалось изменить статус заказа");
+    }
+  };
+
+  // ИСПРАВЛЕННАЯ функция закрытия заказа
+  const handleCloseOrder = async (orderId) => {
+    try {
+      await $authHost.put(`/orders/${orderId}/close`);
+      setSuccess("Заказ успешно закрыт");
+      await loadData();
+    } catch (error) {
+      console.error("Ошибка закрытия заказа:", error);
+      if (error.response?.status === 400) {
+        const errorData = error.response?.data;
+        if (errorData?.forceCloseAvailable) {
+          setError(
+            `Не удалось закрыть заказ: ${errorData.message}. Хотите принудительно закрыть?`
+          );
+        } else {
+          setError(
+            errorData?.message ||
+              "Не все блюда поданы. Невозможно закрыть заказ."
+          );
+        }
+      } else {
+        setError("Не удалось закрыть заказ");
       }
     }
   };
 
+  // Функция для принудительного закрытия заказа
+  const handleForceCloseOrder = async (orderId) => {
+    try {
+      if (
+        window.confirm(
+          "Вы уверены, что хотите принудительно закрыть заказ? Все неподанные блюда будут отмечены как поданные."
+        )
+      ) {
+        await $authHost.put(`/orders/${orderId}/close`, { force: true });
+        setSuccess("Заказ принудительно закрыт");
+        await loadData();
+      }
+    } catch (error) {
+      console.error("Ошибка принудительного закрытия заказа:", error);
+      setError("Не удалось закрыть заказ");
+    }
+  };
+
+  // Вспомогательные функции для отображения
   const getStatusColor = (status) => {
     switch (status) {
       case "occupied":
@@ -683,14 +788,39 @@ const TablesManagement = () => {
     }
   };
 
-  // Исправленная функция форматирования времени для отображения
-  const formatTime = (utcDate) => {
-    if (!utcDate) return "";
-    const localDate = fromUTCToLocal(utcDate);
-    return localDate.toLocaleTimeString("ru-RU", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const getOrderStatusColor = (status) => {
+    switch (status) {
+      case "open":
+        return "primary";
+      case "in_progress":
+        return "warning";
+      case "ready":
+        return "success";
+      case "closed":
+        return "secondary";
+      default:
+        return "light";
+    }
+  };
+
+  const getOrderStatusText = (status) => {
+    const translations = {
+      open: "Открыт",
+      in_progress: "В работе",
+      ready: "Готов",
+      closed: "Закрыт",
+    };
+    return translations[status] || status;
+  };
+
+  const getReservationStatusText = (status) => {
+    const translations = {
+      confirmed: "Подтверждено",
+      seated: "Гости за столом",
+      cancelled: "Отменено",
+      completed: "Завершено",
+    };
+    return translations[status] || status;
   };
 
   const formatDateTime = (utcDate) => {
@@ -705,7 +835,6 @@ const TablesManagement = () => {
     });
   };
 
-  // Функция для получения информации об официанте
   const getWaiterInfo = (tableId) => {
     const tableOrders = getTableOrders(tableId);
     if (tableOrders.length > 0) {
@@ -713,7 +842,6 @@ const TablesManagement = () => {
       if (order.waiter) {
         return `${order.waiter.firstName} ${order.waiter.lastName}`;
       }
-      // Если в данных заказа нет информации об официанте, ищем среди загруженных официантов
       if (order.waiterId) {
         const waiter = waiters.find((w) => w.id === order.waiterId);
         if (waiter) {
@@ -722,17 +850,6 @@ const TablesManagement = () => {
       }
     }
     return null;
-  };
-
-  // Функция для получения перевода статуса бронирования
-  const getReservationStatusText = (status) => {
-    const translations = {
-      confirmed: "Подтверждено",
-      seated: "Гости за столом",
-      cancelled: "Отменено",
-      completed: "Завершено",
-    };
-    return translations[status] || status;
   };
 
   // Статистика
@@ -759,6 +876,12 @@ const TablesManagement = () => {
   };
 
   const statistics = getStatistics();
+
+  const tabs = [
+    { id: "tables", label: "Схема зала", icon: "bi-grid-3x3-gap" },
+    { id: "orders", label: "Заказы", icon: "bi-cart" },
+    { id: "reservations", label: "Бронирования", icon: "bi-calendar-event" },
+  ];
 
   if (loading) {
     return (
@@ -801,38 +924,19 @@ const TablesManagement = () => {
                       <div>
                         <h1 className="h3 mb-2">
                           <i className="bi bi-table me-2"></i>
-                          Управление столиками
+                          Управление столиками и заказами
                         </h1>
                         <p className="text-muted mb-0">
                           Всего столиков: {statistics.totalTables} | Занято:{" "}
                           {statistics.occupiedTables} | Забронировано:{" "}
                           {statistics.reservedTables} | Свободно:{" "}
-                          {statistics.freeTables}
+                          {statistics.freeTables} | Активных заказов:{" "}
+                          {statistics.activeOrdersCount}
                         </p>
                       </div>
                     </div>
                   </div>
                   <div className="col-md-6 text-end">
-                    <div className="btn-group me-2">
-                      <button
-                        className={`btn btn-outline-primary ${
-                          view === "grid" ? "active" : ""
-                        }`}
-                        onClick={() => setView("grid")}
-                      >
-                        <i className="bi bi-grid-3x3-gap me-1"></i>
-                        Сетка
-                      </button>
-                      <button
-                        className={`btn btn-outline-primary ${
-                          view === "list" ? "active" : ""
-                        }`}
-                        onClick={() => setView("list")}
-                      >
-                        <i className="bi bi-list me-1"></i>
-                        Список
-                      </button>
-                    </div>
                     <button
                       className="btn btn-primary"
                       onClick={handleAddTable}
@@ -879,239 +983,90 @@ const TablesManagement = () => {
           </div>
         )}
 
-        {/* Статистика */}
+        {/* Табы */}
         <div className="row mb-4">
           <div className="col-12">
             <div className="card">
+              <div className="card-header bg-white p-0">
+                <ul className="nav nav-tabs card-header-tabs">
+                  {tabs.map((tab) => (
+                    <li key={tab.id} className="nav-item">
+                      <button
+                        className={`nav-link ${
+                          activeTab === tab.id ? "active" : ""
+                        }`}
+                        onClick={() => setActiveTab(tab.id)}
+                      >
+                        <i className={`bi ${tab.icon} me-2`}></i>
+                        {tab.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
               <div className="card-body">
-                <div className="row text-center">
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-primary">{statistics.totalTables}</h4>
-                      <small className="text-muted">Всего столиков</small>
-                      {filteredTables.length !== tables.length && (
-                        <div className="small text-info mt-1">
-                          ↓ {filteredTables.length}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-danger">
-                        {statistics.occupiedTables}
-                      </h4>
-                      <small className="text-muted">Занято</small>
-                    </div>
-                  </div>
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-warning">
-                        {statistics.reservedTables}
-                      </h4>
-                      <small className="text-muted">Забронировано</small>
-                    </div>
-                  </div>
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-success">{statistics.freeTables}</h4>
-                      <small className="text-muted">Свободно</small>
-                    </div>
-                  </div>
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-info">
-                        {statistics.activeOrdersCount}
-                      </h4>
-                      <small className="text-muted">Активных заказов</small>
-                    </div>
-                  </div>
-                  <div className="col-md-2">
-                    <div className="border rounded p-3">
-                      <h4 className="text-secondary">
-                        {filteredReservations.length}
-                      </h4>
-                      <small className="text-muted">
-                        Бронирований на {currentDate}
-                        {filteredTables.length > 0 &&
-                          filteredTables.length !== tables.length && (
-                            <span className="d-block small text-info">
-                              (для отфильтрованных)
-                            </span>
-                          )}
-                      </small>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Информация о фильтрации */}
-                {filteredTables.length > 0 &&
-                  filteredTables.length !== tables.length && (
-                    <div className="row mt-3">
-                      <div className="col-12">
-                        <div className="alert alert-info py-2">
-                          <i className="bi bi-info-circle me-2"></i>
-                          <strong>Фильтр активен:</strong> Показано{" "}
-                          {filteredTables.length} из {tables.length} столиков.
-                          Бронирования отображаются только для выбранных
-                          столиков.
-                        </div>
+                {/* Вкладка Столики */}
+                {activeTab === "tables" && (
+                  <div>
+                    <div className="row mb-4">
+                      <div className="col-md-4">
+                        <label className="form-label">Статус столика</label>
+                        <select
+                          className="form-select"
+                          value={tableFilters.status}
+                          onChange={(e) =>
+                            setTableFilters((prev) => ({
+                              ...prev,
+                              status: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="all">Все статусы</option>
+                          <option value="free">Свободен</option>
+                          <option value="reserved">Забронирован</option>
+                          <option value="occupied">Занят</option>
+                        </select>
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label">Вместимость</label>
+                        <select
+                          className="form-select"
+                          value={tableFilters.capacity}
+                          onChange={(e) =>
+                            setTableFilters((prev) => ({
+                              ...prev,
+                              capacity: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="all">Любая</option>
+                          <option value="2">2+ человек</option>
+                          <option value="4">4+ человек</option>
+                          <option value="6">6+ человек</option>
+                        </select>
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label">Поиск</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Название столика..."
+                          value={tableFilters.search}
+                          onChange={(e) =>
+                            setTableFilters((prev) => ({
+                              ...prev,
+                              search: e.target.value,
+                            }))
+                          }
+                        />
                       </div>
                     </div>
-                  )}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Фильтры */}
-        <div className="row mb-4">
-          <div className="col-12">
-            <div className="card">
-              <div className="card-body">
-                <div className="row g-3 align-items-end">
-                  <div className="col-md-3">
-                    <label className="form-label">Статус столика</label>
-                    <select
-                      className="form-select"
-                      value={filters.status}
-                      onChange={(e) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          status: e.target.value,
-                        }))
-                      }
-                    >
-                      <option value="all">Все статусы</option>
-                      <option value="free">Свободен</option>
-                      <option value="reserved">Забронирован</option>
-                      <option value="occupied">Занят</option>
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label">Вместимость от</label>
-                    <select
-                      className="form-select"
-                      value={filters.capacity}
-                      onChange={(e) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          capacity: e.target.value,
-                        }))
-                      }
-                    >
-                      <option value="all">Любая</option>
-                      <option value="2">2+ человек</option>
-                      <option value="4">4+ человек</option>
-                      <option value="6">6+ человек</option>
-                      <option value="8">8+ человек</option>
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label">Поиск по названию</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="Введите название столика..."
-                      value={filters.search}
-                      onChange={(e) =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          search: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label">Дата для бронирований</label>
-                    <input
-                      type="date"
-                      className="form-control"
-                      value={currentDate}
-                      onChange={(e) => setCurrentDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="row mt-3">
-                  <div className="col-12">
-                    <div className="d-flex gap-2">
-                      <span className="badge bg-success">Свободен</span>
-                      <span className="badge bg-info">Скоро бронь</span>
-                      <span className="badge bg-warning">Забронирован</span>
-                      <span className="badge bg-danger">Занят</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Отладочная информация */}
-        <div className="row mb-3">
-          <div className="col-12">
-            <div className="card border-info">
-              <div className="card-header bg-info text-white py-2">
-                <small>
-                  <i className="bi bi-info-circle me-1"></i>Отладочная
-                  информация
-                </small>
-              </div>
-              <div className="card-body py-2">
-                <div className="row small text-muted">
-                  <div className="col-md-2">
-                    Активных заказов: {orders.length}
-                  </div>
-                  <div className="col-md-2">
-                    Всего бронирований: {reservations.length}
-                  </div>
-                  <div className="col-md-2">Официантов: {waiters.length}</div>
-                  <div className="col-md-3">
-                    Отфильтровано: {filteredTables.length}/{tables.length}
-                  </div>
-                  <div className="col-md-3">
-                    Текущее время: {new Date().toLocaleString("ru-RU")}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Сетка столиков */}
-        {view === "grid" && (
-          <div className="row">
-            <div className="col-12">
-              <div className="card">
-                <div className="card-header bg-white d-flex justify-content-between align-items-center">
-                  <h5 className="card-title mb-0">
-                    <i className="bi bi-grid-3x3-gap me-2"></i>
-                    Схема зала
-                  </h5>
-                  <span className="badge bg-primary">
-                    Показано: {filteredTables.length} из {tables.length}
-                  </span>
-                </div>
-                <div className="card-body">
-                  {filteredTables.length === 0 ? (
-                    <div className="text-center py-5">
-                      <i className="bi bi-table display-1 text-muted"></i>
-                      <h5 className="mt-3">Столики не найдены</h5>
-                      <p className="text-muted">
-                        Попробуйте изменить параметры фильтрации
-                      </p>
-                    </div>
-                  ) : (
                     <div className="row g-3">
                       {filteredTables.map((table) => {
                         const status = getTableStatus(table);
-                        const tableOrders = getTableOrders(table.id);
-                        const tableReservations = getTableReservations(
-                          table.id
-                        );
-                        const currentReservation = getCurrentReservation(
-                          table.id
-                        );
+                        const activeOrder = getActiveOrder(table.id);
+                        const canCreateNewOrder = canCreateOrder(table.id);
                         const waiterInfo = getWaiterInfo(table.id);
 
                         return (
@@ -1165,94 +1120,31 @@ const TablesManagement = () => {
                                   </h5>
                                 </div>
 
-                                {/* Информация об официанте для занятых столиков */}
-                                {status === "occupied" && waiterInfo && (
-                                  <div className="mb-2 p-2 bg-light rounded">
-                                    <small className="text-muted">
-                                      Обслуживает:
-                                    </small>
-                                    <div className="small fw-bold">
-                                      {waiterInfo}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Активные заказы */}
-                                {tableOrders.length > 0 && (
-                                  <div className="mb-2">
-                                    <small className="text-muted">
-                                      Активные заказы: {tableOrders.length}
-                                    </small>
-                                    {tableOrders.slice(0, 2).map((order) => (
-                                      <div key={order.id} className="small">
-                                        <strong>Заказ #{order.id}</strong>
-                                        <span className="text-muted">
-                                          {" "}
-                                          - {order.status}
-                                        </span>
-                                      </div>
-                                    ))}
-                                    {tableOrders.length > 2 && (
+                                {activeOrder && (
+                                  <div className="mb-3 p-2 bg-light rounded">
+                                    <div className="d-flex justify-content-between align-items-center mb-2">
                                       <small className="text-muted">
-                                        ...и еще {tableOrders.length - 2}
+                                        Активный заказ:
                                       </small>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Текущее бронирование */}
-                                {currentReservation && (
-                                  <div className="mb-2">
-                                    <small className="text-muted">
-                                      Текущее бронирование:
-                                    </small>
-                                    <div className="small">
-                                      <strong>
-                                        {currentReservation.customerName}
-                                      </strong>
-                                      <div>
-                                        {currentReservation.customerPhone}
-                                      </div>
-                                      <div>
-                                        {formatTime(
-                                          currentReservation.reservedFrom
-                                        )}{" "}
-                                        -{" "}
-                                        {formatTime(
-                                          currentReservation.reservedTo
-                                        )}
-                                      </div>
-                                      <div
-                                        className={`badge bg-${
-                                          currentReservation.status === "seated"
-                                            ? "success"
-                                            : "warning"
-                                        }`}
+                                      <span
+                                        className={`badge bg-${getOrderStatusColor(
+                                          activeOrder.status
+                                        )}`}
                                       >
-                                        {getReservationStatusText(
-                                          currentReservation.status
-                                        )}
-                                      </div>
+                                        {getOrderStatusText(activeOrder.status)}
+                                      </span>
                                     </div>
-                                  </div>
-                                )}
-
-                                {/* Будущие бронирования */}
-                                {tableReservations.filter(
-                                  (r) =>
-                                    fromUTCToLocal(r.reservedFrom) > new Date()
-                                ).length > 0 && (
-                                  <div>
-                                    <small className="text-muted">
-                                      Будущие бронирования:{" "}
-                                      {
-                                        tableReservations.filter(
-                                          (r) =>
-                                            fromUTCToLocal(r.reservedFrom) >
-                                            new Date()
-                                        ).length
-                                      }
-                                    </small>
+                                    {waiterInfo && (
+                                      <div className="small">
+                                        <strong>Официант:</strong> {waiterInfo}
+                                      </div>
+                                    )}
+                                    <div className="small">
+                                      <strong>Сумма:</strong>{" "}
+                                      {calculateOrderTotal(
+                                        activeOrder.items || []
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1261,14 +1153,30 @@ const TablesManagement = () => {
                                   <button
                                     className="btn btn-outline-primary btn-sm"
                                     onClick={() => handleEditTable(table)}
-                                    title="Редактировать столик"
                                   >
                                     <i className="bi bi-pencil"></i>
                                   </button>
+                                  {activeOrder ? (
+                                    <button
+                                      className="btn btn-outline-info btn-sm"
+                                      onClick={() =>
+                                        handleViewOrder(activeOrder)
+                                      }
+                                    >
+                                      <i className="bi bi-eye"></i>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="btn btn-outline-success btn-sm"
+                                      onClick={() => handleCreateOrder(table)}
+                                      disabled={!canCreateNewOrder}
+                                    >
+                                      <i className="bi bi-plus-circle"></i>
+                                    </button>
+                                  )}
                                   <button
-                                    className="btn btn-outline-success btn-sm"
+                                    className="btn btn-outline-warning btn-sm"
                                     onClick={() => handleAddReservation(table)}
-                                    title="Добавить бронирование"
                                     disabled={status === "occupied"}
                                   >
                                     <i className="bi bi-calendar-plus"></i>
@@ -1276,7 +1184,6 @@ const TablesManagement = () => {
                                   <button
                                     className="btn btn-outline-danger btn-sm"
                                     onClick={() => handleDeleteTable(table)}
-                                    title="Удалить столик"
                                   >
                                     <i className="bi bi-trash"></i>
                                   </button>
@@ -1287,189 +1194,341 @@ const TablesManagement = () => {
                         );
                       })}
                     </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Табличный вид */}
-        {view === "list" && (
-          <div className="row">
-            <div className="col-12">
-              <div className="card">
-                <div className="card-header bg-white d-flex justify-content-between align-items-center">
-                  <h5 className="card-title mb-0">
-                    <i className="bi bi-list me-2"></i>
-                    Список столиков
-                  </h5>
-                  <span className="badge bg-primary">
-                    Показано: {filteredTables.length} из {tables.length}
-                  </span>
-                </div>
-                <div className="card-body">
-                  {filteredTables.length === 0 ? (
-                    <div className="text-center py-5">
-                      <i className="bi bi-table display-1 text-muted"></i>
-                      <h5 className="mt-3">Столики не найдены</h5>
-                      <p className="text-muted">
-                        Попробуйте изменить параметры фильтрации
-                      </p>
+                    {filteredTables.length === 0 && (
+                      <div className="text-center py-5">
+                        <i className="bi bi-table display-1 text-muted"></i>
+                        <h5 className="mt-3">Столики не найдены</h5>
+                        <p className="text-muted">
+                          Попробуйте изменить параметры фильтрации
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Вкладка Заказы */}
+                {activeTab === "orders" && (
+                  <div>
+                    <div className="row mb-4">
+                      <div className="col-md-6">
+                        <label className="form-label">Статус заказа</label>
+                        <select
+                          className="form-select"
+                          value={orderFilters.status}
+                          onChange={(e) =>
+                            setOrderFilters((prev) => ({
+                              ...prev,
+                              status: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="all">Все статусы</option>
+                          <option value="open">Открыт</option>
+                          <option value="in_progress">В работе</option>
+                          <option value="ready">Готов</option>
+                        </select>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">Поиск</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="ID заказа или столик..."
+                          value={orderFilters.search}
+                          onChange={(e) =>
+                            setOrderFilters((prev) => ({
+                              ...prev,
+                              search: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
                     </div>
-                  ) : (
+
                     <div className="table-responsive">
                       <table className="table table-hover">
                         <thead className="table-light">
                           <tr>
+                            <th>ID заказа</th>
                             <th>Столик</th>
-                            <th>Вместимость</th>
-                            <th>Статус</th>
                             <th>Официант</th>
-                            <th>Активные заказы</th>
-                            <th>Текущее бронирование</th>
-                            <th>Будущие бронирования</th>
-                            <th width="120">Действия</th>
+                            <th>Статус</th>
+                            <th>Количество блюд</th>
+                            <th>Сумма</th>
+                            <th>Создан</th>
+                            <th width="180">Действия</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredTables.map((table) => {
-                            const status = getTableStatus(table);
-                            const tableOrders = getTableOrders(table.id);
-                            const tableReservations = getTableReservations(
-                              table.id
+                          {filteredOrders.map((order) => {
+                            const table = tables.find(
+                              (t) => t.id === order.tableId
                             );
-                            const currentReservation = getCurrentReservation(
-                              table.id
+                            const waiter = waiters.find(
+                              (w) => w.id === order.waiterId
                             );
-                            const futureReservations = tableReservations.filter(
-                              (r) => fromUTCToLocal(r.reservedFrom) > new Date()
+                            const totalAmount = calculateOrderTotal(
+                              order.items || []
                             );
-                            const waiterInfo = getWaiterInfo(table.id);
 
                             return (
-                              <tr key={table.id}>
+                              <tr key={order.id}>
                                 <td>
-                                  <strong>{table.name}</strong>
+                                  <strong>#{order.id}</strong>
                                 </td>
                                 <td>
-                                  <span className="badge bg-secondary">
-                                    {table.capacity} чел.
-                                  </span>
+                                  {table ? (
+                                    <span className="badge bg-secondary">
+                                      {table.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted">
+                                      Не найден
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  {waiter ? (
+                                    <span>
+                                      {waiter.firstName} {waiter.lastName}
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted">
+                                      Не назначен
+                                    </span>
+                                  )}
                                 </td>
                                 <td>
                                   <span
-                                    className={`badge bg-${getStatusColor(
-                                      status
+                                    className={`badge bg-${getOrderStatusColor(
+                                      order.status
                                     )}`}
                                   >
-                                    {getStatusText(status)}
+                                    {getOrderStatusText(order.status)}
                                   </span>
                                 </td>
                                 <td>
-                                  {waiterInfo ? (
-                                    <span className="small">{waiterInfo}</span>
-                                  ) : (
-                                    <span className="text-muted">-</span>
-                                  )}
+                                  <span className="badge bg-info">
+                                    {order.items?.length || 0}
+                                  </span>
                                 </td>
                                 <td>
-                                  {tableOrders.length > 0 ? (
-                                    <div>
-                                      <span className="badge bg-info">
-                                        {tableOrders.length}
-                                      </span>
-                                      {tableOrders.slice(0, 2).map((order) => (
-                                        <div key={order.id} className="small">
-                                          #{order.id} ({order.status})
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted">Нет</span>
-                                  )}
+                                  <strong>{totalAmount}</strong>
                                 </td>
                                 <td>
-                                  {currentReservation ? (
-                                    <div className="small">
-                                      <div>
-                                        <strong>
-                                          {currentReservation.customerName}
-                                        </strong>
-                                      </div>
-                                      <div>
-                                        {currentReservation.customerPhone}
-                                      </div>
-                                      <div className="text-muted">
-                                        {formatTime(
-                                          currentReservation.reservedFrom
-                                        )}{" "}
-                                        -{" "}
-                                        {formatTime(
-                                          currentReservation.reservedTo
-                                        )}
-                                      </div>
-                                      <span
-                                        className={`badge bg-${
-                                          currentReservation.status === "seated"
-                                            ? "success"
-                                            : "warning"
-                                        }`}
-                                      >
-                                        {getReservationStatusText(
-                                          currentReservation.status
-                                        )}
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted">Нет</span>
-                                  )}
-                                </td>
-                                <td>
-                                  {futureReservations.length > 0 ? (
-                                    <div>
-                                      <span className="badge bg-info">
-                                        {futureReservations.length}
-                                      </span>
-                                      <div className="small text-muted">
-                                        {futureReservations
-                                          .slice(0, 2)
-                                          .map((r) => (
-                                            <div key={r.id}>
-                                              {r.customerName} (
-                                              {formatTime(r.reservedFrom)})
-                                            </div>
-                                          ))}
-                                        {futureReservations.length > 2 && "..."}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted">Нет</span>
-                                  )}
+                                  <small className="text-muted">
+                                    {formatDateTime(order.createdAt)}
+                                  </small>
                                 </td>
                                 <td>
                                   <div className="btn-group">
                                     <button
                                       className="btn btn-outline-primary btn-sm"
-                                      onClick={() => handleEditTable(table)}
-                                      title="Редактировать"
+                                      onClick={() => handleViewOrder(order)}
+                                      title="Просмотреть заказ"
+                                    >
+                                      <i className="bi bi-eye"></i>
+                                    </button>
+                                    {order.status === "open" && (
+                                      <button
+                                        className="btn btn-outline-warning btn-sm"
+                                        onClick={() =>
+                                          handleOrderStatusChange(
+                                            order.id,
+                                            "in_progress"
+                                          )
+                                        }
+                                        title="Начать приготовление"
+                                      >
+                                        <i className="bi bi-play-circle"></i>
+                                      </button>
+                                    )}
+                                    {order.status === "in_progress" && (
+                                      <button
+                                        className="btn btn-outline-success btn-sm"
+                                        onClick={() =>
+                                          handleOrderStatusChange(
+                                            order.id,
+                                            "ready"
+                                          )
+                                        }
+                                        title="Отметить готовым"
+                                      >
+                                        <i className="bi bi-check-circle"></i>
+                                      </button>
+                                    )}
+                                    {order.status === "ready" && (
+                                      <>
+                                        <button
+                                          className="btn btn-outline-secondary btn-sm"
+                                          onClick={() =>
+                                            handleCloseOrder(order.id)
+                                          }
+                                          title="Закрыть заказ"
+                                        >
+                                          <i className="bi bi-x-circle"></i>
+                                        </button>
+                                        <button
+                                          className="btn btn-outline-danger btn-sm"
+                                          onClick={() =>
+                                            handleForceCloseOrder(order.id)
+                                          }
+                                          title="Принудительно закрыть заказ"
+                                        >
+                                          <i className="bi bi-exclamation-circle"></i>
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {filteredOrders.length === 0 && (
+                      <div className="text-center py-5">
+                        <i className="bi bi-cart display-1 text-muted"></i>
+                        <h5 className="mt-3">Заказы не найдены</h5>
+                        <p className="text-muted">
+                          Нет активных заказов по выбранным фильтрам
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Вкладка Бронирования */}
+                {activeTab === "reservations" && (
+                  <div>
+                    <div className="row mb-4">
+                      <div className="col-md-6">
+                        <label className="form-label">Дата</label>
+                        <input
+                          type="date"
+                          className="form-control"
+                          value={reservationFilters.date}
+                          onChange={(e) =>
+                            setReservationFilters((prev) => ({
+                              ...prev,
+                              date: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">Статус</label>
+                        <select
+                          className="form-select"
+                          value={reservationFilters.status}
+                          onChange={(e) =>
+                            setReservationFilters((prev) => ({
+                              ...prev,
+                              status: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="all">Все статусы</option>
+                          <option value="confirmed">Подтверждено</option>
+                          <option value="seated">Гости за столом</option>
+                          <option value="completed">Завершено</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                      <h6 className="mb-0">
+                        Бронирования на {reservationFilters.date}
+                      </h6>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => handleAddReservation()}
+                      >
+                        <i className="bi bi-plus-circle me-1"></i>
+                        Добавить бронирование
+                      </button>
+                    </div>
+
+                    <div className="table-responsive">
+                      <table className="table table-hover">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Столик</th>
+                            <th>Клиент</th>
+                            <th>Телефон</th>
+                            <th>Гости</th>
+                            <th>Время</th>
+                            <th>Статус</th>
+                            <th width="100">Действия</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredReservations.map((reservation) => {
+                            const table = tables.find(
+                              (t) => t.id === reservation.tableId
+                            );
+                            return (
+                              <tr key={reservation.id}>
+                                <td>
+                                  <strong>
+                                    {table?.name ||
+                                      `Столик #${reservation.tableId}`}
+                                  </strong>
+                                  {table && (
+                                    <div className="small text-muted">
+                                      Вместимость: {table.capacity} чел.
+                                    </div>
+                                  )}
+                                </td>
+                                <td>{reservation.customerName}</td>
+                                <td>{reservation.customerPhone}</td>
+                                <td>
+                                  <span className="badge bg-secondary">
+                                    {reservation.guestCount} чел.
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="small">
+                                    {formatDateTime(reservation.reservedFrom)} -
+                                    <br />
+                                    {formatDateTime(reservation.reservedTo)}
+                                  </div>
+                                </td>
+                                <td>
+                                  <span
+                                    className={`badge ${
+                                      reservation.status === "confirmed"
+                                        ? "bg-warning"
+                                        : reservation.status === "seated"
+                                        ? "bg-success"
+                                        : reservation.status === "completed"
+                                        ? "bg-secondary"
+                                        : "bg-light text-dark"
+                                    }`}
+                                  >
+                                    {getReservationStatusText(
+                                      reservation.status
+                                    )}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="btn-group">
+                                    <button
+                                      className="btn btn-outline-primary btn-sm"
+                                      onClick={() =>
+                                        handleEditReservation(reservation)
+                                      }
                                     >
                                       <i className="bi bi-pencil"></i>
                                     </button>
                                     <button
-                                      className="btn btn-outline-success btn-sm"
-                                      onClick={() =>
-                                        handleAddReservation(table)
-                                      }
-                                      title="Добавить бронирование"
-                                      disabled={status === "occupied"}
-                                    >
-                                      <i className="bi bi-calendar-plus"></i>
-                                    </button>
-                                    <button
                                       className="btn btn-outline-danger btn-sm"
-                                      onClick={() => handleDeleteTable(table)}
-                                      title="Удалить"
+                                      onClick={() =>
+                                        handleDeleteReservation(reservation)
+                                      }
                                     >
                                       <i className="bi bi-trash"></i>
                                     </button>
@@ -1481,145 +1540,16 @@ const TablesManagement = () => {
                         </tbody>
                       </table>
                     </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Список бронирований на выбранную дату ДЛЯ ОТФИЛЬТРОВАННЫХ СТОЛИКОВ */}
-        <div className="row mt-4">
-          <div className="col-12">
-            <div className="card">
-              <div className="card-header bg-white d-flex justify-content-between align-items-center">
-                <h5 className="card-title mb-0">
-                  <i className="bi bi-calendar-event me-2"></i>
-                  Бронирования на {currentDate}
-                  {filteredTables.length > 0 &&
-                    filteredTables.length !== tables.length && (
-                      <span className="badge bg-info ms-2">
-                        Только для отфильтрованных столиков
-                      </span>
+                    {filteredReservations.length === 0 && (
+                      <div className="text-center py-5">
+                        <i className="bi bi-calendar-x display-1 text-muted"></i>
+                        <h5 className="mt-3">Бронирования не найдены</h5>
+                        <p className="text-muted">
+                          Нет бронирований на выбранную дату
+                        </p>
+                      </div>
                     )}
-                </h5>
-                <div>
-                  <span className="badge bg-primary me-2">
-                    Отфильтровано столиков: {filteredTables.length}
-                  </span>
-                  <span className="badge bg-secondary">
-                    Бронирований: {filteredReservations.length}
-                  </span>
-                </div>
-              </div>
-              <div className="card-body">
-                {filteredTables.length === 0 ? (
-                  <div className="text-center py-4 text-muted">
-                    <i className="bi bi-funnel display-4"></i>
-                    <h5 className="mt-3">Нет отфильтрованных столиков</h5>
-                    <p>
-                      Измените параметры фильтрации чтобы увидеть бронирования
-                    </p>
-                  </div>
-                ) : filteredReservations.length === 0 ? (
-                  <div className="text-center py-3 text-muted">
-                    <i className="bi bi-calendar-x display-4"></i>
-                    <h5 className="mt-3">Нет бронирований</h5>
-                    <p>
-                      На выбранную дату нет бронирований для отфильтрованных
-                      столиков
-                    </p>
-                  </div>
-                ) : (
-                  <div className="table-responsive">
-                    <table className="table table-hover">
-                      <thead className="table-light">
-                        <tr>
-                          <th>Столик</th>
-                          <th>Клиент</th>
-                          <th>Телефон</th>
-                          <th>Гости</th>
-                          <th>Время</th>
-                          <th>Статус</th>
-                          <th width="100">Действия</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredReservations.map((reservation) => {
-                          const table = tables.find(
-                            (t) => t.id === reservation.tableId
-                          );
-                          return (
-                            <tr key={reservation.id}>
-                              <td>
-                                <strong>
-                                  {table?.name ||
-                                    `Столик #${reservation.tableId}`}
-                                </strong>
-                                {table && (
-                                  <div className="small text-muted">
-                                    Вместимость: {table.capacity} чел.
-                                  </div>
-                                )}
-                              </td>
-                              <td>{reservation.customerName}</td>
-                              <td>{reservation.customerPhone}</td>
-                              <td>
-                                <span className="badge bg-secondary">
-                                  {reservation.guestCount} чел.
-                                </span>
-                              </td>
-                              <td>
-                                <div className="small">
-                                  {formatDateTime(reservation.reservedFrom)} -
-                                  <br />
-                                  {formatDateTime(reservation.reservedTo)}
-                                </div>
-                              </td>
-                              <td>
-                                <span
-                                  className={`badge ${
-                                    reservation.status === "confirmed"
-                                      ? "bg-warning"
-                                      : reservation.status === "seated"
-                                      ? "bg-success"
-                                      : reservation.status === "cancelled"
-                                      ? "bg-danger"
-                                      : reservation.status === "completed"
-                                      ? "bg-secondary"
-                                      : "bg-light text-dark"
-                                  }`}
-                                >
-                                  {getReservationStatusText(reservation.status)}
-                                </span>
-                              </td>
-                              <td>
-                                <div className="btn-group">
-                                  <button
-                                    className="btn btn-outline-primary btn-sm"
-                                    onClick={() =>
-                                      handleEditReservation(reservation)
-                                    }
-                                    title="Редактировать"
-                                  >
-                                    <i className="bi bi-pencil"></i>
-                                  </button>
-                                  <button
-                                    className="btn btn-outline-danger btn-sm"
-                                    onClick={() =>
-                                      handleDeleteReservation(reservation)
-                                    }
-                                    title="Удалить"
-                                  >
-                                    <i className="bi bi-trash"></i>
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
                   </div>
                 )}
               </div>
@@ -1655,7 +1585,6 @@ const TablesManagement = () => {
                         <input
                           type="text"
                           className="form-control"
-                          name="name"
                           value={tableForm.name}
                           onChange={(e) =>
                             setTableForm((prev) => ({
@@ -1664,14 +1593,12 @@ const TablesManagement = () => {
                             }))
                           }
                           required
-                          placeholder="Например: Столик 1, У окна, VIP зона"
                         />
                       </div>
                       <div className="col-12">
                         <label className="form-label">Вместимость *</label>
                         <select
                           className="form-select"
-                          name="capacity"
                           value={tableForm.capacity}
                           onChange={(e) =>
                             setTableForm((prev) => ({
@@ -1709,7 +1636,7 @@ const TablesManagement = () => {
         )}
 
         {/* Модальное окно бронирования */}
-        {showReservationModal && selectedTable && (
+        {showReservationModal && (
           <div
             className="modal show d-block"
             style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
@@ -1732,18 +1659,40 @@ const TablesManagement = () => {
                   <div className="modal-body">
                     <div className="row g-3">
                       <div className="col-12">
-                        <div className="alert alert-info">
-                          <i className="bi bi-info-circle me-2"></i>
-                          Столик: <strong>{selectedTable.name}</strong>{" "}
-                          (вместимость: {selectedTable.capacity} чел.)
-                        </div>
+                        <label className="form-label">Столик *</label>
+                        <select
+                          className="form-select"
+                          value={selectedTable?.id || ""}
+                          onChange={(e) => {
+                            const table = tables.find(
+                              (t) => t.id === parseInt(e.target.value)
+                            );
+                            setSelectedTable(table);
+                            if (table) {
+                              setReservationForm((prev) => ({
+                                ...prev,
+                                guestCount: Math.min(
+                                  prev.guestCount,
+                                  table.capacity
+                                ),
+                              }));
+                            }
+                          }}
+                          required
+                        >
+                          <option value="">Выберите столик</option>
+                          {tables.map((table) => (
+                            <option key={table.id} value={table.id}>
+                              {table.name} (вместимость: {table.capacity} чел.)
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label">Имя клиента *</label>
                         <input
                           type="text"
                           className="form-control"
-                          name="customerName"
                           value={reservationForm.customerName}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1759,7 +1708,6 @@ const TablesManagement = () => {
                         <input
                           type="tel"
                           className="form-control"
-                          name="customerPhone"
                           value={reservationForm.customerPhone}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1776,7 +1724,6 @@ const TablesManagement = () => {
                         </label>
                         <select
                           className="form-select"
-                          name="guestCount"
                           value={reservationForm.guestCount}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1786,21 +1733,21 @@ const TablesManagement = () => {
                           }
                           required
                         >
-                          {Array.from(
-                            { length: selectedTable.capacity },
-                            (_, i) => i + 1
-                          ).map((num) => (
-                            <option key={num} value={num}>
-                              {num} человек
-                            </option>
-                          ))}
+                          {selectedTable &&
+                            Array.from(
+                              { length: selectedTable.capacity },
+                              (_, i) => i + 1
+                            ).map((num) => (
+                              <option key={num} value={num}>
+                                {num} человек
+                              </option>
+                            ))}
                         </select>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label">Статус</label>
                         <select
                           className="form-select"
-                          name="status"
                           value={reservationForm.status}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1818,7 +1765,6 @@ const TablesManagement = () => {
                         <input
                           type="datetime-local"
                           className="form-control"
-                          name="reservedFrom"
                           value={reservationForm.reservedFrom}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1834,7 +1780,6 @@ const TablesManagement = () => {
                         <input
                           type="datetime-local"
                           className="form-control"
-                          name="reservedTo"
                           value={reservationForm.reservedTo}
                           onChange={(e) =>
                             setReservationForm((prev) => ({
@@ -1865,108 +1810,234 @@ const TablesManagement = () => {
           </div>
         )}
 
-        {/* Модальное окно подтверждения удаления с конфликтами */}
-        {deleteCheck.open && (
+        {/* Модальное окно заказа */}
+        {showOrderModal && selectedTable && (
           <div
             className="modal show d-block"
             style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
           >
-            <div className="modal-dialog">
+            <div className="modal-dialog modal-lg">
               <div className="modal-content">
                 <div className="modal-header">
-                  <h5 className="modal-title text-danger">
-                    <i className="bi bi-exclamation-triangle me-2"></i>
-                    Невозможно удалить столик
+                  <h5 className="modal-title">
+                    {selectedOrder
+                      ? `Заказ для столика "${selectedTable.name}"`
+                      : `Новый заказ для столика "${selectedTable.name}"`}
                   </h5>
                   <button
                     type="button"
                     className="btn-close"
-                    onClick={() =>
-                      setDeleteCheck({
-                        open: false,
-                        table: null,
-                        conflicts: null,
-                      })
-                    }
+                    onClick={() => setShowOrderModal(false)}
                   ></button>
                 </div>
-                <div className="modal-body">
-                  <p>
-                    На столике "<strong>{deleteCheck.table?.name}</strong>" есть
-                    активные элементы:
-                  </p>
+                <form onSubmit={handleOrderSubmit}>
+                  <div className="modal-body">
+                    <div className="row g-3">
+                      <div className="col-md-6">
+                        <label className="form-label">Официант *</label>
+                        <select
+                          className="form-select"
+                          value={orderForm.waiterId}
+                          onChange={(e) =>
+                            setOrderForm((prev) => ({
+                              ...prev,
+                              waiterId: e.target.value,
+                            }))
+                          }
+                          required
+                        >
+                          <option value="">Выберите официанта</option>
+                          {waiters.map((waiter) => (
+                            <option key={waiter.id} value={waiter.id}>
+                              {waiter.firstName} {waiter.lastName} (
+                              {waiter.role === "admin" ? "Админ" : "Официант"})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">Статус заказа</label>
+                        <select
+                          className="form-select"
+                          value={orderForm.status}
+                          onChange={(e) =>
+                            setOrderForm((prev) => ({
+                              ...prev,
+                              status: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="open">Открыт</option>
+                          <option value="in_progress">В работе</option>
+                          <option value="ready">Готов</option>
+                        </select>
+                      </div>
 
-                  {deleteCheck.conflicts?.activeOrders.length > 0 && (
-                    <div className="mb-3">
-                      <h6 className="text-danger">Активные заказы:</h6>
-                      <ul className="list-group">
-                        {deleteCheck.conflicts.activeOrders.map((order) => (
-                          <li key={order.id} className="list-group-item">
-                            Заказ #{order.id} - {order.status}
-                            {order.waiter && (
-                              <span className="text-muted">
-                                {" "}
-                                (обслуживает: {order.waiter.firstName})
+                      <div className="col-12">
+                        <div className="card">
+                          <div className="card-header">
+                            <h6 className="mb-0">Добавить блюдо</h6>
+                          </div>
+                          <div className="card-body">
+                            <div className="row g-2">
+                              <div className="col-md-5">
+                                <select
+                                  className="form-select"
+                                  value={newOrderItem.dishId}
+                                  onChange={(e) =>
+                                    setNewOrderItem((prev) => ({
+                                      ...prev,
+                                      dishId: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value="">Выберите блюдо</option>
+                                  {dishes.map((dish) => (
+                                    <option key={dish.id} value={dish.id}>
+                                      {dish.name} - {dish.price}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="col-md-2">
+                                <input
+                                  type="number"
+                                  className="form-control"
+                                  min="1"
+                                  value={newOrderItem.quantity}
+                                  onChange={(e) =>
+                                    setNewOrderItem((prev) => ({
+                                      ...prev,
+                                      quantity: parseInt(e.target.value),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="col-md-3">
+                                <input
+                                  type="text"
+                                  className="form-control"
+                                  placeholder="Примечания"
+                                  value={newOrderItem.notes}
+                                  onChange={(e) =>
+                                    setNewOrderItem((prev) => ({
+                                      ...prev,
+                                      notes: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="col-md-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary w-100"
+                                  onClick={handleAddOrderItem}
+                                >
+                                  Добавить
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="col-12">
+                        <div className="card">
+                          <div className="card-header d-flex justify-content-between align-items-center">
+                            <h6 className="mb-0">Блюда в заказе</h6>
+                            <div>
+                              <span className="badge bg-primary me-2">
+                                {orderForm.items.length} блюд
                               </span>
+                              <span className="badge bg-success">
+                                Итого: {calculateOrderTotal(orderForm.items)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="card-body">
+                            {orderForm.items.length === 0 ? (
+                              <p className="text-muted text-center mb-0">
+                                Нет добавленных блюд
+                              </p>
+                            ) : (
+                              <div className="table-responsive">
+                                <table className="table table-sm">
+                                  <thead>
+                                    <tr>
+                                      <th>Блюдо</th>
+                                      <th>Цена</th>
+                                      <th>Кол-во</th>
+                                      <th>Сумма</th>
+                                      <th>Примечания</th>
+                                      <th width="50"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {orderForm.items.map((item, index) => (
+                                      <tr key={item.id || index}>
+                                        <td>{getItemName(item)}</td>
+                                        <td>{getItemPrice(item)}</td>
+                                        <td>{item.quantity || 0}</td>
+                                        <td>
+                                          {getItemPrice(item) *
+                                            (item.quantity || 0)}
+                                        </td>
+                                        <td>
+                                          <small className="text-muted">
+                                            {item.notes || ""}
+                                          </small>
+                                        </td>
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="btn btn-outline-danger btn-sm"
+                                            onClick={() =>
+                                              handleRemoveOrderItem(index)
+                                            }
+                                          >
+                                            <i className="bi bi-trash"></i>
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr>
+                                      <td colSpan="3" className="text-end">
+                                        <strong>Итого:</strong>
+                                      </td>
+                                      <td colSpan="3">
+                                        <strong>
+                                          {calculateOrderTotal(orderForm.items)}
+                                        </strong>
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
                             )}
-                          </li>
-                        ))}
-                      </ul>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  )}
-
-                  {deleteCheck.conflicts?.futureReservations.length > 0 && (
-                    <div className="mb-3">
-                      <h6 className="text-warning">Будущие бронирования:</h6>
-                      <ul className="list-group">
-                        {deleteCheck.conflicts.futureReservations.map(
-                          (reservation) => (
-                            <li
-                              key={reservation.id}
-                              className="list-group-item"
-                            >
-                              {reservation.customerName} (
-                              {reservation.customerPhone})
-                              <br />
-                              <small className="text-muted">
-                                {formatDateTime(reservation.reservedFrom)} -{" "}
-                                {formatTime(reservation.reservedTo)}
-                              </small>
-                            </li>
-                          )
-                        )}
-                      </ul>
-                    </div>
-                  )}
-
-                  <div className="alert alert-warning">
-                    <i className="bi bi-info-circle me-2"></i>
-                    Завершите все активные заказы и удалите будущие бронирования
-                    перед удалением столика.
                   </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() =>
-                      setDeleteCheck({
-                        open: false,
-                        table: null,
-                        conflicts: null,
-                      })
-                    }
-                  >
-                    Понятно
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => confirmDeleteTable(deleteCheck.table.id)}
-                  >
-                    Все равно удалить
-                  </button>
-                </div>
+                  <div className="modal-footer">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowOrderModal(false)}
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={orderForm.items.length === 0}
+                    >
+                      {selectedOrder ? "Обновить заказ" : "Создать заказ"}
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           </div>
