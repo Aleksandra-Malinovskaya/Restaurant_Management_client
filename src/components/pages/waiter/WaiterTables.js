@@ -52,11 +52,12 @@ const WaiterTables = () => {
     navigate(`/waiter/table/${table.id}`);
   };
 
+  // В функции getTableStatus - добавим проверку на payment
   const getTableStatus = (table) => {
     const tableOrders = orders.filter(
       (order) =>
         order.tableId === table.id &&
-        ["open", "in_progress", "ready"].includes(order.status)
+        ["open", "in_progress", "ready", "payment"].includes(order.status) // ДОБАВЛЕН payment
     );
 
     const now = new Date();

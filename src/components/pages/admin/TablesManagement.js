@@ -157,12 +157,12 @@ const TablesManagement = () => {
         }
 
         try {
-          // Загружаем все активные заказы
+          // Загружаем все активные заказы ВКЛЮЧАЯ payment
           const allOrdersResponse = await $authHost.get("/orders");
           loadedOrders = safeArray(extractData(allOrdersResponse.data));
-          // Фильтруем только активные заказы
+          // Фильтруем только активные заказы (ДОБАВЛЕН payment)
           loadedOrders = loadedOrders.filter((order) =>
-            ["open", "in_progress", "ready"].includes(order.status)
+            ["open", "in_progress", "ready", "payment"].includes(order.status)
           );
         } catch (err) {
           console.error("Ошибка загрузки заказов:", err);
@@ -265,7 +265,7 @@ const TablesManagement = () => {
     return orders.filter(
       (order) =>
         order.tableId === tableId &&
-        ["open", "in_progress", "ready"].includes(order.status)
+        ["open", "in_progress", "ready", "payment"].includes(order.status) // ДОБАВЛЕН payment
     );
   };
 
@@ -284,6 +284,7 @@ const TablesManagement = () => {
     const tableOrders = getTableOrders(table.id);
     const currentReservation = getCurrentReservation(table.id);
 
+    // ЕСЛИ ЕСТЬ ЗАКАЗ В ЛЮБОМ АКТИВНОМ СТАТУСЕ (включая payment) - СТОЛИК ЗАНЯТ
     if (tableOrders.length > 0) return "occupied";
     if (currentReservation && currentReservation.status === "seated")
       return "occupied";
@@ -325,7 +326,7 @@ const TablesManagement = () => {
     return item.dish?.name || item.name || "Неизвестное блюдо";
   };
 
-  // Функция для расчета суммы заказа - ИСПРАВЛЕННАЯ
+  // Функция для расчета суммы заказа
   const calculateOrderTotal = (orderItems) => {
     if (!orderItems || !Array.isArray(orderItems)) return 0;
 
@@ -561,7 +562,7 @@ const TablesManagement = () => {
     }
   };
 
-  // Функции для заказов - ИСПРАВЛЕННЫЕ
+  // Функции для заказов
   const handleViewOrder = (order) => {
     const table = tables.find((t) => t.id === order.tableId);
     if (table) {
@@ -571,9 +572,7 @@ const TablesManagement = () => {
       // Преобразуем данные для отображения
       const transformedItems = (order.items || []).map((item) => ({
         ...item,
-        // Добавляем price если его нет
         price: getItemPrice(item),
-        // Добавляем dish если его нет
         dish: item.dish || { name: getItemName(item) },
       }));
 
@@ -629,7 +628,7 @@ const TablesManagement = () => {
       notes: newOrderItem.notes,
       status: "ordered",
       price: selectedDish.price,
-      itemPrice: selectedDish.price, // Добавляем и itemPrice для совместимости
+      itemPrice: selectedDish.price,
     };
 
     setOrderForm((prev) => ({
@@ -651,7 +650,7 @@ const TablesManagement = () => {
     }));
   };
 
-  // ИСПРАВЛЕННАЯ функция сохранения заказа
+  // Функция сохранения заказа
   const handleOrderSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -680,11 +679,9 @@ const TablesManagement = () => {
       console.log("Отправка заказа:", orderData);
 
       if (selectedOrder) {
-        // Обновление существующего заказа
         await $authHost.put(`/orders/${selectedOrder.id}`, orderData);
         setSuccess("Заказ успешно обновлен");
       } else {
-        // Создание нового заказа
         await $authHost.post("/orders", orderData);
         setSuccess("Заказ успешно создан");
       }
@@ -713,7 +710,7 @@ const TablesManagement = () => {
     }
   };
 
-  // ИСПРАВЛЕННАЯ функция закрытия заказа
+  // Функция закрытия заказа
   const handleCloseOrder = async (orderId) => {
     try {
       await $authHost.put(`/orders/${orderId}/close`);
@@ -796,6 +793,8 @@ const TablesManagement = () => {
         return "warning";
       case "ready":
         return "success";
+      case "payment": // ДОБАВЛЕНО
+        return "info";
       case "closed":
         return "secondary";
       default:
@@ -808,6 +807,7 @@ const TablesManagement = () => {
       open: "Открыт",
       in_progress: "В работе",
       ready: "Готов",
+      payment: "Ожидание оплаты", // ДОБАВЛЕНО
       closed: "Закрыт",
     };
     return translations[status] || status;
@@ -865,6 +865,9 @@ const TablesManagement = () => {
       (t) => getTableStatus(t) === "free"
     ).length;
     const activeOrdersCount = orders.length;
+    const paymentOrdersCount = orders.filter(
+      (order) => order.status === "payment"
+    ).length;
 
     return {
       totalTables,
@@ -872,6 +875,7 @@ const TablesManagement = () => {
       reservedTables,
       freeTables,
       activeOrdersCount,
+      paymentOrdersCount,
     };
   };
 
@@ -931,7 +935,8 @@ const TablesManagement = () => {
                           {statistics.occupiedTables} | Забронировано:{" "}
                           {statistics.reservedTables} | Свободно:{" "}
                           {statistics.freeTables} | Активных заказов:{" "}
-                          {statistics.activeOrdersCount}
+                          {statistics.activeOrdersCount} | Ожидают оплаты:{" "}
+                          {statistics.paymentOrdersCount}
                         </p>
                       </div>
                     </div>
@@ -1227,6 +1232,7 @@ const TablesManagement = () => {
                           <option value="open">Открыт</option>
                           <option value="in_progress">В работе</option>
                           <option value="ready">Готов</option>
+                          <option value="payment">Ожидание оплаты</option>
                         </select>
                       </div>
                       <div className="col-md-6">
@@ -1330,54 +1336,74 @@ const TablesManagement = () => {
                                     >
                                       <i className="bi bi-eye"></i>
                                     </button>
-                                    {order.status === "open" && (
-                                      <button
-                                        className="btn btn-outline-warning btn-sm"
-                                        onClick={() =>
-                                          handleOrderStatusChange(
-                                            order.id,
-                                            "in_progress"
-                                          )
-                                        }
-                                        title="Начать приготовление"
-                                      >
-                                        <i className="bi bi-play-circle"></i>
-                                      </button>
-                                    )}
-                                    {order.status === "in_progress" && (
+
+                                    {/* Для заказов в статусе payment - только кнопка закрытия */}
+                                    {order.status === "payment" && (
                                       <button
                                         className="btn btn-outline-success btn-sm"
                                         onClick={() =>
-                                          handleOrderStatusChange(
-                                            order.id,
-                                            "ready"
-                                          )
+                                          handleCloseOrder(order.id)
                                         }
-                                        title="Отметить готовым"
+                                        title="Закрыть заказ после оплаты"
                                       >
-                                        <i className="bi bi-check-circle"></i>
+                                        <i className="bi bi-check-circle"></i>{" "}
+                                        Закрыть
                                       </button>
                                     )}
-                                    {order.status === "ready" && (
+
+                                    {/* Для других статусов - обычные кнопки */}
+                                    {order.status !== "payment" && (
                                       <>
-                                        <button
-                                          className="btn btn-outline-secondary btn-sm"
-                                          onClick={() =>
-                                            handleCloseOrder(order.id)
-                                          }
-                                          title="Закрыть заказ"
-                                        >
-                                          <i className="bi bi-x-circle"></i>
-                                        </button>
-                                        <button
-                                          className="btn btn-outline-danger btn-sm"
-                                          onClick={() =>
-                                            handleForceCloseOrder(order.id)
-                                          }
-                                          title="Принудительно закрыть заказ"
-                                        >
-                                          <i className="bi bi-exclamation-circle"></i>
-                                        </button>
+                                        {order.status === "open" && (
+                                          <button
+                                            className="btn btn-outline-warning btn-sm"
+                                            onClick={() =>
+                                              handleOrderStatusChange(
+                                                order.id,
+                                                "in_progress"
+                                              )
+                                            }
+                                            title="Начать приготовление"
+                                          >
+                                            <i className="bi bi-play-circle"></i>
+                                          </button>
+                                        )}
+                                        {order.status === "in_progress" && (
+                                          <button
+                                            className="btn btn-outline-success btn-sm"
+                                            onClick={() =>
+                                              handleOrderStatusChange(
+                                                order.id,
+                                                "ready"
+                                              )
+                                            }
+                                            title="Отметить готовым"
+                                          >
+                                            <i className="bi bi-check-circle"></i>
+                                          </button>
+                                        )}
+                                        {order.status === "ready" && (
+                                          <>
+                                            <button
+                                              className="btn btn-outline-secondary btn-sm"
+                                              onClick={() =>
+                                                handleCloseOrder(order.id)
+                                              }
+                                              title="Закрыть заказ"
+                                            >
+                                              <i className="bi bi-x-circle"></i>
+                                            </button>
+                                            <button
+                                              className="btn btn-outline-danger btn-sm"
+                                              onClick={() =>
+                                                handleForceCloseOrder(order.id)
+                                              }
+                                              title="Принудительно закрыть заказ"
+                                            >
+                                              <i className="bi bi-exclamation-circle"></i>
+                                            </button>
+                                          </>
+                                        )}
                                       </>
                                     )}
                                   </div>

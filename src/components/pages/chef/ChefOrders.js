@@ -2,8 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { orderAPI } from "../../../services/orderAPI";
-import { orderItemAPI } from "../../../services/orderItemAPI";
+import { $authHost } from "../../../http";
 
 const ChefOrders = () => {
   const { user } = useAuth();
@@ -16,10 +15,8 @@ const ChefOrders = () => {
   const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await orderAPI.getAll({
-        status: "open,in_progress",
-      });
-      setOrders(data);
+      const response = await $authHost.get("/orders/kitchen");
+      setOrders(response.data);
     } catch (error) {
       console.error("Ошибка загрузки заказов:", error);
       setError("Не удалось загрузить заказы");
@@ -30,7 +27,9 @@ const ChefOrders = () => {
 
   const takeOrder = async (orderId) => {
     try {
-      await orderAPI.updateStatus(orderId, "in_progress");
+      await $authHost.put(`/orders/${orderId}/status`, {
+        status: "in_progress",
+      });
       setSuccess("Заказ взят в работу");
       loadOrders();
     } catch (error) {
@@ -41,7 +40,7 @@ const ChefOrders = () => {
 
   const completeOrder = async (orderId) => {
     try {
-      await orderAPI.updateStatus(orderId, "ready");
+      await $authHost.put(`/orders/${orderId}/status`, { status: "ready" });
       setSuccess("Заказ готов к подаче");
       loadOrders();
     } catch (error) {
@@ -52,23 +51,23 @@ const ChefOrders = () => {
 
   const takeDish = async (orderItemId) => {
     try {
-      await orderItemAPI.updateStatus(orderItemId, "preparing", user.id);
+      await $authHost.put(`/orders/order-items/${orderItemId}/take`);
       setSuccess("Блюдо взято в работу");
       loadOrders();
     } catch (error) {
       console.error("Ошибка взятия блюда:", error);
-      setError("Не удалось взять блюдо");
+      setError(error.response?.data?.message || "Не удалось взять блюдо");
     }
   };
 
   const completeDish = async (orderItemId) => {
     try {
-      await orderItemAPI.updateStatus(orderItemId, "completed");
+      await $authHost.put(`/orders/order-items/${orderItemId}/complete`);
       setSuccess("Блюдо готово");
       loadOrders();
     } catch (error) {
       console.error("Ошибка завершения блюда:", error);
-      setError("Не удалось завершить блюдо");
+      setError(error.response?.data?.message || "Не удалось завершить блюдо");
     }
   };
 
@@ -96,13 +95,26 @@ const ChefOrders = () => {
   };
 
   const getDishBadge = (status, chefId) => {
-    if (status === "completed")
+    if (status === "ready")
       return <span className="badge bg-success">Готово</span>;
     if (status === "preparing" && chefId === user.id)
       return <span className="badge bg-primary">Вы готовите</span>;
     if (status === "preparing")
       return <span className="badge bg-info">Готовится</span>;
     return <span className="badge bg-secondary">Ожидает</span>;
+  };
+
+  // Функция для проверки, можно ли взять блюдо
+  const canTakeDish = (item) => {
+    return (
+      item.status === "ordered" ||
+      (item.status === "preparing" && item.chefId === user.id)
+    );
+  };
+
+  // Функция для проверки, можно ли отметить блюдо как готовое
+  const canCompleteDish = (item) => {
+    return item.status === "preparing" && item.chefId === user.id;
   };
 
   if (loading) {
@@ -199,7 +211,7 @@ const ChefOrders = () => {
                         <div>
                           <h5 className="mb-0">Заказ #{order.id}</h5>
                           <small className="text-muted">
-                            Стол: {order.table?.number || "Не указан"} | Время:{" "}
+                            Стол: {order.table?.name || "Не указан"} | Время:{" "}
                             {new Date(order.createdAt).toLocaleTimeString()}
                           </small>
                         </div>
@@ -249,23 +261,24 @@ const ChefOrders = () => {
                                     {getDishBadge(item.status, item.chefId)}
                                   </td>
                                   <td>
-                                    {item.status === "ordered" && (
+                                    {canTakeDish(item) && (
                                       <button
-                                        className="btn btn-sm btn-outline-primary"
+                                        className="btn btn-sm btn-outline-primary me-1"
                                         onClick={() => takeDish(item.id)}
                                       >
-                                        Взять блюдо
+                                        {item.status === "ordered"
+                                          ? "Взять"
+                                          : "Продолжить"}
                                       </button>
                                     )}
-                                    {item.status === "preparing" &&
-                                      item.chefId === user.id && (
-                                        <button
-                                          className="btn btn-sm btn-outline-success"
-                                          onClick={() => completeDish(item.id)}
-                                        >
-                                          Готово
-                                        </button>
-                                      )}
+                                    {canCompleteDish(item) && (
+                                      <button
+                                        className="btn btn-sm btn-outline-success"
+                                        onClick={() => completeDish(item.id)}
+                                      >
+                                        Готово
+                                      </button>
+                                    )}
                                   </td>
                                 </tr>
                               ))}

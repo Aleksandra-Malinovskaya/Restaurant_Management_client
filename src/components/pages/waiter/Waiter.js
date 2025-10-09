@@ -286,7 +286,7 @@ const Waiter = () => {
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-dark mb-1">{stats.todayRevenue} ₽</h4>
+                      <h4 className="text-dark mb-1">{stats.todayRevenue}</h4>
                       <small className="text-muted">Выручка сегодня</small>
                     </div>
                   </div>
