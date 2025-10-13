@@ -65,6 +65,9 @@ const TablesManagement = () => {
     notes: "",
   });
 
+  // Флаг для предотвращения множественных обновлений
+  const [isUpdating, setIsUpdating] = useState(false);
+
   // Функция для преобразования времени с учетом часового пояса
   const toLocalISOString = (date) => {
     if (!date) return "";
@@ -103,39 +106,72 @@ const TablesManagement = () => {
     return [];
   };
 
-  // Функция для автоматического обновления статусов завершенных бронирований
-  const updateCompletedReservations = useCallback(async (reservationsList) => {
-    const now = new Date();
-    const completedReservations = reservationsList.filter(
-      (reservation) =>
-        reservation.status === "seated" &&
-        fromUTCToLocal(reservation.reservedTo) < now
-    );
+  const checkAndCompleteReservations = useCallback(
+    async (currentReservations, currentOrders) => {
+      if (isUpdating) return false;
 
-    let hasUpdates = false;
-
-    for (const reservation of completedReservations) {
       try {
-        await $authHost.put(`/reservations/${reservation.id}`, {
-          status: "completed",
-        });
-        console.log(
-          `Бронирование ${reservation.id} переведено в статус "completed"`
-        );
-        hasUpdates = true;
+        const now = new Date();
+        let hasUpdates = false;
+
+        for (const reservation of currentReservations) {
+          // Проверяем только активные бронирования (confirmed или seated)
+          if (["confirmed", "seated"].includes(reservation.status)) {
+            const reservedTo = fromUTCToLocal(reservation.reservedTo);
+
+            // Если время брони прошло
+            if (now > reservedTo) {
+              // Проверяем, есть ли активные заказы на этом столике
+              const tableActiveOrders = currentOrders.filter(
+                (order) =>
+                  order.tableId === reservation.tableId &&
+                  [
+                    "open",
+                    "in_progress",
+                    "ready",
+                    "served",
+                    "payment",
+                  ].includes(order.status)
+              );
+
+              // Если активных заказов нет - завершаем бронь
+              if (tableActiveOrders.length === 0) {
+                try {
+                  await $authHost.put(`/reservations/${reservation.id}`, {
+                    status: "completed",
+                  });
+                  console.log(
+                    `Бронирование ${reservation.id} автоматически завершено`
+                  );
+                  hasUpdates = true;
+                } catch (error) {
+                  console.error(
+                    `Ошибка завершения бронирования ${reservation.id}:`,
+                    error
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        return hasUpdates;
       } catch (error) {
         console.error(
-          `Ошибка обновления бронирования ${reservation.id}:`,
+          "Ошибка при автоматической проверке бронирований:",
           error
         );
+        return false;
       }
-    }
+    },
+    [isUpdating]
+  );
 
-    return hasUpdates;
-  }, []);
-
+  // Основная функция загрузки данных
   const loadData = useCallback(
-    async (silent = false) => {
+    async (silent = false, forceCheckReservations = false) => {
+      if (isUpdating && !forceCheckReservations) return;
+
       try {
         if (!silent) {
           setLoading(true);
@@ -157,10 +193,8 @@ const TablesManagement = () => {
         }
 
         try {
-          // Загружаем все активные заказы ВКЛЮЧАЯ payment
           const allOrdersResponse = await $authHost.get("/orders");
           loadedOrders = safeArray(extractData(allOrdersResponse.data));
-          // Фильтруем только активные заказы (ДОБАВЛЕН payment)
           loadedOrders = loadedOrders.filter((order) =>
             ["open", "in_progress", "ready", "payment"].includes(order.status)
           );
@@ -180,10 +214,8 @@ const TablesManagement = () => {
         }
 
         try {
-          // Загружаем только официантов и админов
           const usersResponse = await $authHost.get("/users");
           const allUsers = safeArray(extractData(usersResponse.data));
-          // Фильтруем только официантов и админов
           loadedWaiters = allUsers.filter(
             (user) => user.role === "waiter" || user.role === "admin"
           );
@@ -200,25 +232,30 @@ const TablesManagement = () => {
           loadedDishes = [];
         }
 
+        // Устанавливаем данные в состояние
         setTables(loadedTables);
         setOrders(loadedOrders);
         setReservations(loadedReservations);
         setWaiters(loadedWaiters);
         setDishes(loadedDishes);
 
-        // Автоматическое обновление статусов завершенных бронирований
-        try {
-          const hasUpdates = await updateCompletedReservations(
-            loadedReservations
-          );
-          if (hasUpdates) {
-            setTimeout(() => loadData(true), 1000);
+        // Автоматическая проверка и завершение бронирований (только при полной загрузке)
+        if (!silent || forceCheckReservations) {
+          try {
+            const hasUpdates = await checkAndCompleteReservations(
+              loadedReservations,
+              loadedOrders
+            );
+            if (hasUpdates) {
+              // Если были обновления, перезагружаем данные через 2 секунды
+              setTimeout(() => loadData(true, false), 2000);
+            }
+          } catch (updateErr) {
+            console.error(
+              "Ошибка при автоматической проверке бронирований:",
+              updateErr
+            );
           }
-        } catch (updateErr) {
-          console.error(
-            "Ошибка при обновлении статусов бронирований:",
-            updateErr
-          );
         }
       } catch (error) {
         console.error("Общая ошибка загрузки:", error);
@@ -231,30 +268,36 @@ const TablesManagement = () => {
         if (!silent) {
           setLoading(false);
         }
+        setIsUpdating(false);
       }
     },
-    [updateCompletedReservations]
+    [checkAndCompleteReservations, isUpdating]
   );
 
+  // Первоначальная загрузка данных
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData]); // Добавили loadData в зависимости
 
-  // Периодическое обновление статусов
+  // Периодическое обновление статусов и проверка бронирований (реже)
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const hasUpdates = await updateCompletedReservations(reservations);
-        if (hasUpdates) {
-          await loadData(true);
-        }
+        // Проверяем бронирования каждую минуту
+        await loadData(true, true);
       } catch (error) {
-        console.error("Ошибка при автоматическом обновлении статусов:", error);
+        console.error("Ошибка при автоматическом обновлении:", error);
       }
-    }, 30000);
+    }, 60000); // 1 минута
 
     return () => clearInterval(interval);
-  }, [reservations, updateCompletedReservations, loadData]);
+  }, [loadData]); // Добавили loadData в зависимости
+
+  // Отладочный useEffect
+  useEffect(() => {
+    console.log("Текущие бронирования:", reservations);
+    console.log("Текущие заказы:", orders);
+  }, [reservations, orders]);
 
   const handleBack = () => {
     navigate("/admin");
@@ -265,7 +308,7 @@ const TablesManagement = () => {
     return orders.filter(
       (order) =>
         order.tableId === tableId &&
-        ["open", "in_progress", "ready", "payment"].includes(order.status) // ДОБАВЛЕН payment
+        ["open", "in_progress", "ready", "payment"].includes(order.status)
     );
   };
 
@@ -284,7 +327,6 @@ const TablesManagement = () => {
     const tableOrders = getTableOrders(table.id);
     const currentReservation = getCurrentReservation(table.id);
 
-    // ЕСЛИ ЕСТЬ ЗАКАЗ В ЛЮБОМ АКТИВНОМ СТАТУСЕ (включая payment) - СТОЛИК ЗАНЯТ
     if (tableOrders.length > 0) return "occupied";
     if (currentReservation && currentReservation.status === "seated")
       return "occupied";
@@ -303,6 +345,55 @@ const TablesManagement = () => {
 
     if (upcomingReservation) return "reserved_soon";
     return "free";
+  };
+
+  // Функция для принудительного завершения бронирования
+  const handleForceCompleteReservation = async (reservation) => {
+    try {
+      if (
+        window.confirm(
+          `Завершить бронирование для ${reservation.customerName}? Столик будет освобожден.`
+        )
+      ) {
+        setIsUpdating(true);
+        await $authHost.put(`/reservations/${reservation.id}`, {
+          status: "completed",
+        });
+        setSuccess("Бронирование принудительно завершено");
+        await loadData(true, false);
+      }
+    } catch (error) {
+      console.error("Ошибка принудительного завершения бронирования:", error);
+      setError("Не удалось завершить бронирование");
+      setIsUpdating(false);
+    }
+  };
+
+  // Функция для проверки, можно ли завершить бронирование
+  const canCompleteReservation = (reservation) => {
+    if (!["confirmed", "seated"].includes(reservation.status)) {
+      return false;
+    }
+
+    const now = new Date();
+    const reservedTo = fromUTCToLocal(reservation.reservedTo);
+
+    // Если время брони прошло
+    if (now > reservedTo) {
+      // Проверяем, есть ли активные заказы на этом столике
+      const tableActiveOrders = orders.filter(
+        (order) =>
+          order.tableId === reservation.tableId &&
+          ["open", "in_progress", "ready", "served", "payment"].includes(
+            order.status
+          )
+      );
+
+      // Если активных заказов нет - можно завершить
+      return tableActiveOrders.length === 0;
+    }
+
+    return false;
   };
 
   const canCreateOrder = (tableId) => {
@@ -379,7 +470,7 @@ const TablesManagement = () => {
     return matchesDate && matchesStatus;
   });
 
-  // Функции для столиков
+  // Оптимизированные функции для столиков
   const handleAddTable = () => {
     setEditingTable(null);
     setTableForm({ name: "", capacity: 2 });
@@ -402,12 +493,14 @@ const TablesManagement = () => {
         return;
       }
 
+      setIsUpdating(true);
       await $authHost.delete(`/tables/${table.id}`);
       await loadData();
       setSuccess("Столик успешно удален");
     } catch (error) {
       console.error("Ошибка удаления столика:", error);
       setError("Не удалось удалить столик");
+      setIsUpdating(false);
     }
   };
 
@@ -425,6 +518,7 @@ const TablesManagement = () => {
         return;
       }
 
+      setIsUpdating(true);
       if (editingTable) {
         await $authHost.put(`/tables/${editingTable.id}`, tableForm);
         setSuccess("Столик успешно обновлен");
@@ -437,10 +531,11 @@ const TablesManagement = () => {
     } catch (error) {
       console.error("Ошибка сохранения столика:", error);
       setError(`Не удалось ${editingTable ? "обновить" : "добавить"} столик`);
+      setIsUpdating(false);
     }
   };
 
-  // Функции для бронирований
+  // Оптимизированные функции для бронирований
   const handleAddReservation = (table = null) => {
     setSelectedTable(table);
     setEditingReservation(null);
@@ -481,12 +576,14 @@ const TablesManagement = () => {
     }
 
     try {
+      setIsUpdating(true);
       await $authHost.delete(`/reservations/${reservation.id}`);
       await loadData();
       setSuccess("Бронирование успешно удалено");
     } catch (error) {
       console.error("Ошибка удаления бронирования:", error);
       setError("Не удалось удалить бронирование");
+      setIsUpdating(false);
     }
   };
 
@@ -537,6 +634,7 @@ const TablesManagement = () => {
         return;
       }
 
+      setIsUpdating(true);
       const submitData = {
         ...reservationForm,
         tableId: selectedTable.id,
@@ -559,17 +657,17 @@ const TablesManagement = () => {
     } catch (error) {
       console.error("Ошибка сохранения бронирования:", error);
       setError("Не удалось сохранить бронирование");
+      setIsUpdating(false);
     }
   };
 
-  // Функции для заказов
+  // Оптимизированные функции для заказов
   const handleViewOrder = (order) => {
     const table = tables.find((t) => t.id === order.tableId);
     if (table) {
       setSelectedOrder(order);
       setSelectedTable(table);
 
-      // Преобразуем данные для отображения
       const transformedItems = (order.items || []).map((item) => ({
         ...item,
         price: getItemPrice(item),
@@ -664,6 +762,7 @@ const TablesManagement = () => {
         return;
       }
 
+      setIsUpdating(true);
       const orderData = {
         tableId: selectedTable.id,
         waiterId: parseInt(orderForm.waiterId),
@@ -675,8 +774,6 @@ const TablesManagement = () => {
           price: item.price,
         })),
       };
-
-      console.log("Отправка заказа:", orderData);
 
       if (selectedOrder) {
         await $authHost.put(`/orders/${selectedOrder.id}`, orderData);
@@ -690,29 +787,32 @@ const TablesManagement = () => {
       await loadData();
     } catch (error) {
       console.error("Ошибка сохранения заказа:", error);
-      console.error("Детали ошибки:", error.response?.data);
       setError(
         `Не удалось ${selectedOrder ? "обновить" : "создать"} заказ: ${
           error.response?.data?.message || error.message
         }`
       );
+      setIsUpdating(false);
     }
   };
 
   const handleOrderStatusChange = async (orderId, newStatus) => {
     try {
+      setIsUpdating(true);
       await $authHost.put(`/orders/${orderId}/status`, { status: newStatus });
       setSuccess("Статус заказа обновлен");
       await loadData();
     } catch (error) {
       console.error("Ошибка изменения статуса заказа:", error);
       setError("Не удалось изменить статус заказа");
+      setIsUpdating(false);
     }
   };
 
   // Функция закрытия заказа
   const handleCloseOrder = async (orderId) => {
     try {
+      setIsUpdating(true);
       await $authHost.put(`/orders/${orderId}/close`);
       setSuccess("Заказ успешно закрыт");
       await loadData();
@@ -733,6 +833,7 @@ const TablesManagement = () => {
       } else {
         setError("Не удалось закрыть заказ");
       }
+      setIsUpdating(false);
     }
   };
 
@@ -744,6 +845,7 @@ const TablesManagement = () => {
           "Вы уверены, что хотите принудительно закрыть заказ? Все неподанные блюда будут отмечены как поданные."
         )
       ) {
+        setIsUpdating(true);
         await $authHost.put(`/orders/${orderId}/close`, { force: true });
         setSuccess("Заказ принудительно закрыт");
         await loadData();
@@ -751,10 +853,11 @@ const TablesManagement = () => {
     } catch (error) {
       console.error("Ошибка принудительного закрытия заказа:", error);
       setError("Не удалось закрыть заказ");
+      setIsUpdating(false);
     }
   };
 
-  // Вспомогательные функции для отображения
+  // Вспомогательные функции для отображения (без изменений)
   const getStatusColor = (status) => {
     switch (status) {
       case "occupied":
@@ -793,7 +896,7 @@ const TablesManagement = () => {
         return "warning";
       case "ready":
         return "success";
-      case "payment": // ДОБАВЛЕНО
+      case "payment":
         return "info";
       case "closed":
         return "secondary";
@@ -807,7 +910,7 @@ const TablesManagement = () => {
       open: "Открыт",
       in_progress: "В работе",
       ready: "Готов",
-      payment: "Ожидание оплаты", // ДОБАВЛЕНО
+      payment: "Ожидание оплаты",
       closed: "Закрыт",
     };
     return translations[status] || status;
@@ -850,6 +953,20 @@ const TablesManagement = () => {
       }
     }
     return null;
+  };
+
+  // Функция для получения информации о текущем бронировании
+  const getCurrentReservationInfo = (tableId) => {
+    const now = new Date();
+    const currentReservation = reservations.find(
+      (reservation) =>
+        reservation.tableId === tableId &&
+        fromUTCToLocal(reservation.reservedFrom) <= now &&
+        fromUTCToLocal(reservation.reservedTo) >= now &&
+        ["confirmed", "seated"].includes(reservation.status)
+    );
+
+    return currentReservation;
   };
 
   // Статистика
@@ -1010,7 +1127,7 @@ const TablesManagement = () => {
                 </ul>
               </div>
               <div className="card-body">
-                {/* Вкладка Столики */}
+                {/* Вкладка Столики - ОБНОВЛЕННАЯ ВЕРСИЯ КАК У ОФИЦИАНТА */}
                 {activeTab === "tables" && (
                   <div>
                     <div className="row mb-4">
@@ -1067,23 +1184,24 @@ const TablesManagement = () => {
                       </div>
                     </div>
 
-                    <div className="row g-3">
+                    {/* ОБНОВЛЕННОЕ ОТОБРАЖЕНИЕ СТОЛОВ - КАК У ОФИЦИАНТА */}
+                    <div className="row g-4">
                       {filteredTables.map((table) => {
                         const status = getTableStatus(table);
                         const activeOrder = getActiveOrder(table.id);
+                        const currentReservation = getCurrentReservationInfo(
+                          table.id
+                        );
                         const canCreateNewOrder = canCreateOrder(table.id);
                         const waiterInfo = getWaiterInfo(table.id);
 
                         return (
                           <div
                             key={table.id}
-                            className="col-xl-3 col-lg-4 col-md-6"
+                            className="col-xl-4 col-lg-6 col-md-6"
                           >
-                            <div
-                              className={`card border-${getStatusColor(
-                                status
-                              )} h-100`}
-                            >
+                            <div className="card h-100 shadow-sm">
+                              {/* Заголовок карточки */}
                               <div
                                 className={`card-header bg-${getStatusColor(
                                   status
@@ -1091,20 +1209,32 @@ const TablesManagement = () => {
                               >
                                 <div className="d-flex justify-content-between align-items-center">
                                   <h6 className="mb-0">
-                                    <i className="bi bi-table me-1"></i>
+                                    <i className="bi bi-table me-2"></i>
                                     {table.name}
                                   </h6>
-                                  <span className="badge bg-light text-dark">
-                                    {table.capacity} чел.
-                                  </span>
+                                  <div className="d-flex gap-2">
+                                    <span className="badge bg-light text-dark">
+                                      {table.capacity} чел.
+                                    </span>
+                                    <span
+                                      className={`badge bg-${getStatusColor(
+                                        status
+                                      )}`}
+                                    >
+                                      {getStatusText(status)}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
+
+                              {/* Тело карточки */}
                               <div className="card-body">
+                                {/* Статус столика */}
                                 <div className="text-center mb-3">
                                   <div
-                                    className={`display-6 text-${getStatusColor(
+                                    className={`display-4 text-${getStatusColor(
                                       status
-                                    )}`}
+                                    )} mb-2`}
                                   >
                                     <i
                                       className={`bi ${
@@ -1124,11 +1254,11 @@ const TablesManagement = () => {
                                     {getStatusText(status)}
                                   </h5>
                                 </div>
-
+                                {/* Информация о заказе */}
                                 {activeOrder && (
-                                  <div className="mb-3 p-2 bg-light rounded">
+                                  <div className="mb-3 p-3 bg-light rounded">
                                     <div className="d-flex justify-content-between align-items-center mb-2">
-                                      <small className="text-muted">
+                                      <small className="text-muted fw-bold">
                                         Активный заказ:
                                       </small>
                                       <span
@@ -1140,33 +1270,110 @@ const TablesManagement = () => {
                                       </span>
                                     </div>
                                     {waiterInfo && (
-                                      <div className="small">
+                                      <div className="small mb-1">
+                                        <i className="bi bi-person me-1"></i>
                                         <strong>Официант:</strong> {waiterInfo}
                                       </div>
                                     )}
-                                    <div className="small">
+                                    <div className="small mb-1">
+                                      <i className="bi bi-cash-coin me-1"></i>
                                       <strong>Сумма:</strong>{" "}
                                       {calculateOrderTotal(
                                         activeOrder.items || []
+                                      )}{" "}
+                                      ₽
+                                    </div>
+                                    <div className="small">
+                                      <i className="bi bi-clock me-1"></i>
+                                      <strong>Блюд:</strong>{" "}
+                                      {activeOrder.items?.length || 0}
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Информация о бронировании */}
+
+                                {currentReservation && !activeOrder && (
+                                  <div className="mb-3 p-3 bg-warning bg-opacity-10 rounded">
+                                    <div className="d-flex justify-content-between align-items-center mb-2">
+                                      <small className="text-muted fw-bold">
+                                        Текущее бронирование:
+                                      </small>
+                                      <div className="d-flex gap-1">
+                                        <span className="badge bg-warning">
+                                          {getReservationStatusText(
+                                            currentReservation.status
+                                          )}
+                                        </span>
+                                        {canCompleteReservation(
+                                          currentReservation
+                                        ) && (
+                                          <button
+                                            className="btn btn-outline-danger btn-sm"
+                                            onClick={() =>
+                                              handleForceCompleteReservation(
+                                                currentReservation
+                                              )
+                                            }
+                                            title="Завершить бронирование"
+                                          >
+                                            <i className="bi bi-check-circle"></i>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="small mb-1">
+                                      <i className="bi bi-person me-1"></i>
+                                      <strong>Клиент:</strong>{" "}
+                                      {currentReservation.customerName}
+                                    </div>
+                                    <div className="small mb-1">
+                                      <i className="bi bi-telephone me-1"></i>
+                                      <strong>Телефон:</strong>{" "}
+                                      {currentReservation.customerPhone}
+                                    </div>
+                                    <div className="small mb-1">
+                                      <i className="bi bi-people me-1"></i>
+                                      <strong>Гости:</strong>{" "}
+                                      {currentReservation.guestCount} чел.
+                                    </div>
+                                    <div className="small">
+                                      <i className="bi bi-clock me-1"></i>
+                                      <strong>До:</strong>{" "}
+                                      {formatDateTime(
+                                        currentReservation.reservedTo
+                                      )}
+                                      {canCompleteReservation(
+                                        currentReservation
+                                      ) && (
+                                        <span className="badge bg-danger ms-2">
+                                          Просрочено
+                                        </span>
                                       )}
                                     </div>
                                   </div>
                                 )}
                               </div>
+
+                              {/* Футер карточки с кнопками */}
                               <div className="card-footer bg-transparent">
-                                <div className="btn-group w-100">
+                                <div className="d-grid gap-2 d-md-flex justify-content-md-end">
+                                  {/* Кнопка редактирования столика */}
                                   <button
                                     className="btn btn-outline-primary btn-sm"
                                     onClick={() => handleEditTable(table)}
+                                    title="Редактировать столик"
                                   >
                                     <i className="bi bi-pencil"></i>
                                   </button>
+
+                                  {/* Кнопка просмотра/создания заказа */}
                                   {activeOrder ? (
                                     <button
                                       className="btn btn-outline-info btn-sm"
                                       onClick={() =>
                                         handleViewOrder(activeOrder)
                                       }
+                                      title="Просмотреть заказ"
                                     >
                                       <i className="bi bi-eye"></i>
                                     </button>
@@ -1175,20 +1382,27 @@ const TablesManagement = () => {
                                       className="btn btn-outline-success btn-sm"
                                       onClick={() => handleCreateOrder(table)}
                                       disabled={!canCreateNewOrder}
+                                      title="Создать заказ"
                                     >
                                       <i className="bi bi-plus-circle"></i>
                                     </button>
                                   )}
+
+                                  {/* Кнопка бронирования */}
                                   <button
                                     className="btn btn-outline-warning btn-sm"
                                     onClick={() => handleAddReservation(table)}
                                     disabled={status === "occupied"}
+                                    title="Забронировать столик"
                                   >
                                     <i className="bi bi-calendar-plus"></i>
                                   </button>
+
+                                  {/* Кнопка удаления */}
                                   <button
                                     className="btn btn-outline-danger btn-sm"
                                     onClick={() => handleDeleteTable(table)}
+                                    title="Удалить столик"
                                   >
                                     <i className="bi bi-trash"></i>
                                   </button>
@@ -1320,7 +1534,7 @@ const TablesManagement = () => {
                                   </span>
                                 </td>
                                 <td>
-                                  <strong>{totalAmount}</strong>
+                                  <strong>{totalAmount} ₽</strong>
                                 </td>
                                 <td>
                                   <small className="text-muted">
@@ -1488,7 +1702,7 @@ const TablesManagement = () => {
                             <th>Гости</th>
                             <th>Время</th>
                             <th>Статус</th>
-                            <th width="100">Действия</th>
+                            <th width="120">Действия</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1496,6 +1710,9 @@ const TablesManagement = () => {
                             const table = tables.find(
                               (t) => t.id === reservation.tableId
                             );
+                            const canComplete =
+                              canCompleteReservation(reservation);
+
                             return (
                               <tr key={reservation.id}>
                                 <td>
@@ -1539,6 +1756,12 @@ const TablesManagement = () => {
                                       reservation.status
                                     )}
                                   </span>
+                                  {canComplete && (
+                                    <div className="small text-danger mt-1">
+                                      <i className="bi bi-clock me-1"></i>
+                                      Можно завершить
+                                    </div>
+                                  )}
                                 </td>
                                 <td>
                                   <div className="btn-group">
@@ -1550,6 +1773,19 @@ const TablesManagement = () => {
                                     >
                                       <i className="bi bi-pencil"></i>
                                     </button>
+                                    {canComplete && (
+                                      <button
+                                        className="btn btn-outline-success btn-sm"
+                                        onClick={() =>
+                                          handleForceCompleteReservation(
+                                            reservation
+                                          )
+                                        }
+                                        title="Завершить бронирование"
+                                      >
+                                        <i className="bi bi-check-circle"></i>
+                                      </button>
+                                    )}
                                     <button
                                       className="btn btn-outline-danger btn-sm"
                                       onClick={() =>
@@ -1582,7 +1818,6 @@ const TablesManagement = () => {
             </div>
           </div>
         </div>
-
         {/* Модальное окно столика */}
         {showTableModal && (
           <div

@@ -3,6 +3,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import Navbar from "../../NavBar";
 import { $authHost } from "../../../http";
 import { useAuth } from "../../../context/AuthContext";
+import {
+  autoCompleteReservation,
+  autoUpdateReservationToSeated,
+  formatLocalDateTime,
+  localToUTC,
+  formatForDateTimeLocal,
+} from "../../../utils/dateUtils";
 
 const WaiterTable = () => {
   const { tableId } = useParams();
@@ -70,10 +77,7 @@ const WaiterTable = () => {
       setOrders(ordersWithCorrectPrices);
 
       // Загружаем бронирования столика
-      const today = new Date().toISOString().split("T")[0];
-      const reservationsResponse = await $authHost.get(
-        `/reservations?date=${today}`
-      );
+      const reservationsResponse = await $authHost.get("/reservations");
       const tableReservations = reservationsResponse.data.filter(
         (reservation) => reservation.tableId === parseInt(tableId)
       );
@@ -104,23 +108,93 @@ const WaiterTable = () => {
     }
   }, [tableId, loadTableData]);
 
+  // Периодическая проверка и авто-завершение бронирований
+  useEffect(() => {
+    const checkAndCompleteReservations = async () => {
+      try {
+        const now = new Date();
+
+        for (const reservation of reservations) {
+          // Если бронь в статусе "seated" и время истекло более 15 минут назад
+          if (reservation.status === "seated") {
+            const reservedTo = new Date(reservation.reservedTo);
+            const fifteenMinutesAfter = new Date(
+              reservedTo.getTime() + 15 * 60000
+            );
+
+            // Коррекция времени для сравнения
+            const timezoneOffset = now.getTimezoneOffset() * 60000;
+            const localNow = new Date(
+              now.getTime() + timezoneOffset + 3 * 60 * 60000
+            );
+            const localFifteenMinutesAfter = new Date(
+              fifteenMinutesAfter.getTime() + timezoneOffset + 3 * 60 * 60000
+            );
+
+            if (localNow > localFifteenMinutesAfter) {
+              // Проверяем, есть ли активные заказы
+              const tableOrders = orders.filter(
+                (order) =>
+                  order.tableId === reservation.tableId &&
+                  [
+                    "open",
+                    "in_progress",
+                    "ready",
+                    "served",
+                    "payment",
+                  ].includes(order.status)
+              );
+
+              // Если активных заказов нет - завершаем бронь
+              if (tableOrders.length === 0) {
+                await $authHost.put(`/reservations/${reservation.id}`, {
+                  status: "completed",
+                });
+                console.log(
+                  `Бронирование ${reservation.id} автоматически завершено по времени`
+                );
+                // Перезагружаем данные
+                await loadTableData();
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error(
+          "Ошибка при автоматической проверке бронирований:",
+          error
+        );
+      }
+    };
+
+    // Проверяем каждые 5 минут
+    const interval = setInterval(checkAndCompleteReservations, 5 * 60 * 1000);
+
+    // Первая проверка при загрузке
+    checkAndCompleteReservations();
+
+    return () => clearInterval(interval);
+  }, [reservations, orders, loadTableData]);
+
   // Возврат к списку столов
   const handleBack = () => {
     navigate("/waiter/tables");
   };
 
-  // Функции для бронирований с учетом временной зоны
   const handleCreateReservation = () => {
     const now = new Date();
-    const timezoneOffset = 3 * 60;
-    const localTime = new Date(now.getTime() + timezoneOffset * 60000);
 
-    const from = new Date(localTime.getTime() + 30 * 60000);
-    const to = new Date(from.getTime() + 2 * 60 * 60000);
+    // Простое и понятное вычисление времени
+    const from = new Date(now.getTime() + 30 * 60000); // +30 минут
+    const to = new Date(from.getTime() + 2 * 60 * 60000); // +2 часа
 
-    const formatForDateTimeLocal = (date) => {
-      return date.toISOString().slice(0, 16);
-    };
+    console.log("Создание брони - вычисленное время:", {
+      now: now.toLocaleString("ru-RU"),
+      from: from.toLocaleString("ru-RU"),
+      to: to.toLocaleString("ru-RU"),
+      fromFormatted: formatForDateTimeLocal(from),
+      toFormatted: formatForDateTimeLocal(to),
+    });
 
     setReservationForm({
       customerName: "",
@@ -135,18 +209,13 @@ const WaiterTable = () => {
   const handleReservationSubmit = async (e) => {
     e.preventDefault();
     try {
-      const convertToUTC = (localDateTime) => {
-        const date = new Date(localDateTime);
-        return new Date(date.getTime() - 3 * 60 * 60000).toISOString();
-      };
-
       const reservationData = {
         tableId: parseInt(tableId),
         customerName: reservationForm.customerName,
         customerPhone: reservationForm.customerPhone,
         guestCount: reservationForm.guestCount,
-        reservedFrom: convertToUTC(reservationForm.reservedFrom),
-        reservedTo: convertToUTC(reservationForm.reservedTo),
+        reservedFrom: localToUTC(reservationForm.reservedFrom),
+        reservedTo: localToUTC(reservationForm.reservedTo),
         status: "confirmed",
       };
 
@@ -173,14 +242,8 @@ const WaiterTable = () => {
   // Добавление блюд в существующий заказ
   const handleAddToOrder = (order) => {
     setSelectedOrder(order);
-    setOrderForm({
-      items: order.items.map((item) => ({
-        ...item,
-        id: Date.now() + Math.random(),
-        dish: item.dish || { name: "Неизвестное блюдо", price: 0 },
-        price: item.itemPrice || item.dish?.price || 0,
-      })),
-    });
+    setOrderForm({ items: [] });
+    setNewOrderItem({ dishId: "", quantity: 1, notes: "" });
     setShowOrderModal(true);
   };
 
@@ -205,6 +268,7 @@ const WaiterTable = () => {
       quantity: newOrderItem.quantity,
       notes: newOrderItem.notes,
       price: selectedDish.price,
+      status: "ordered",
     };
 
     setOrderForm((prev) => ({
@@ -223,34 +287,52 @@ const WaiterTable = () => {
         return;
       }
 
-      const orderData = {
-        tableId: parseInt(tableId),
-        waiterId: user.id,
-        items: orderForm.items.map((item) => ({
-          dishId: item.dishId,
-          quantity: item.quantity,
-          notes: item.notes,
-          price: item.price || item.dish?.price,
-        })),
-      };
-
       if (selectedOrder) {
-        await $authHost.put(`/orders/${selectedOrder.id}`, orderData);
-        setSuccess("Заказ успешно обновлен");
+        const orderData = {
+          items: orderForm.items.map((item) => ({
+            dishId: item.dishId,
+            quantity: item.quantity,
+            notes: item.notes,
+            price: item.price || item.dish?.price,
+          })),
+        };
+
+        await $authHost.post(`/orders/${selectedOrder.id}/items`, orderData);
+        setSuccess("Новые блюда добавлены в заказ");
       } else {
+        const orderData = {
+          tableId: parseInt(tableId),
+          waiterId: user.id,
+          items: orderForm.items.map((item) => ({
+            dishId: item.dishId,
+            quantity: item.quantity,
+            notes: item.notes,
+            price: item.price || item.dish?.price,
+          })),
+        };
+
         await $authHost.post("/orders", orderData);
         setSuccess("Заказ успешно создан");
+
+        // АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ БРОНИ ПРИ СОЗДАНИИ ЗАКАЗА
+        await autoUpdateReservationToSeated(parseInt(tableId), $authHost);
       }
 
       setShowOrderModal(false);
       await loadTableData();
     } catch (error) {
       console.error("Ошибка создания/обновления заказа:", error);
-      setError(error.response?.data?.message || "Не удалось создать заказ");
+      if (error.response?.status === 404) {
+        setError(
+          "Endpoint для добавления блюд не найден. Обратитесь к администратору."
+        );
+      } else {
+        setError(error.response?.data?.message || "Не удалось создать заказ");
+      }
     }
   };
 
-  // ФУНКЦИЯ: Подача отдельного блюда - ИСПРАВЛЕННЫЙ РОУТ
+  // ФУНКЦИЯ: Подача отдельного блюда
   const handleServeDish = async (orderItemId) => {
     try {
       await $authHost.put(`/orders/order-items/${orderItemId}/served`);
@@ -285,6 +367,13 @@ const WaiterTable = () => {
     try {
       await $authHost.put(`/orders/${orderId}/payment`);
       setSuccess("Заказ переведен в статус 'Ожидание оплаты'");
+
+      // АВТОМАТИЧЕСКОЕ ЗАВЕРШЕНИЕ БРОНИ ПРИ ПЕРЕВОДЕ В ОПЛАТУ
+      const order = orders.find((o) => o.id === orderId);
+      if (order) {
+        await autoCompleteReservation(order.tableId, $authHost);
+      }
+
       await loadTableData();
     } catch (error) {
       console.error("Ошибка перевода заказа в статус оплаты:", error);
@@ -292,6 +381,39 @@ const WaiterTable = () => {
         error.response?.data?.message ||
           "Не удалось перевести заказ в статус оплаты"
       );
+    }
+  };
+
+  // ФУНКЦИЯ: Закрытие заказа
+  const handleCloseOrder = async (orderId) => {
+    try {
+      const order = orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      await $authHost.put(`/orders/${orderId}/close`);
+      setSuccess("Заказ успешно закрыт");
+
+      // АВТОМАТИЧЕСКОЕ ЗАВЕРШЕНИЕ БРОНИ
+      await autoCompleteReservation(order.tableId, $authHost);
+
+      await loadTableData();
+    } catch (error) {
+      console.error("Ошибка закрытия заказа:", error);
+      if (error.response?.status === 400) {
+        const errorData = error.response?.data;
+        if (errorData?.forceCloseAvailable) {
+          setError(
+            `Не удалось закрыть заказ: ${errorData.message}. Хотите принудительно закрыть?`
+          );
+        } else {
+          setError(
+            errorData?.message ||
+              "Не все блюда поданы. Невозможно закрыть заказ."
+          );
+        }
+      } else {
+        setError("Не удалось закрыть заказ");
+      }
     }
   };
 
@@ -305,7 +427,7 @@ const WaiterTable = () => {
     }, 0);
   };
 
-  // ИСПРАВЛЕНИЕ: Правильная проверка статуса заказа (убраны неиспользуемые переменные)
+  // Проверка статуса заказа
   const getOrderStatusInfo = (order) => {
     if (!order)
       return { status: "open", label: "Открыт", badgeClass: "primary" };
@@ -313,7 +435,6 @@ const WaiterTable = () => {
     const items = order.items || [];
     const readyItems = items.filter((item) => item.status === "ready").length;
 
-    // Статусы заказа
     if (order.status === "served") {
       return { status: "served", label: "Подано", badgeClass: "info" };
     }
@@ -326,25 +447,19 @@ const WaiterTable = () => {
     }
     if (order.status === "closed") {
       return { status: "closed", label: "Закрыт", badgeClass: "secondary" };
-    }
-    // Если есть готовые блюда - готов к подаче
-    else if (readyItems > 0) {
+    } else if (readyItems > 0) {
       return {
         status: "ready",
         label: "Готов к подаче",
         badgeClass: "success",
       };
-    }
-    // Если есть блюда в процессе приготовления
-    else if (items.some((item) => item.status === "preparing")) {
+    } else if (items.some((item) => item.status === "preparing")) {
       return {
         status: "in_progress",
         label: "Готовится",
         badgeClass: "warning",
       };
-    }
-    // Если все блюда только заказаны
-    else {
+    } else {
       return { status: "open", label: "Открыт", badgeClass: "primary" };
     }
   };
@@ -357,12 +472,8 @@ const WaiterTable = () => {
   // ФУНКЦИЯ: Проверка, можно ли перевести заказ в статус "Подано"
   const canMarkOrderServed = (order) => {
     if (!order || !order.items || order.items.length === 0) return false;
-
-    // Все блюда должны быть served
     const allServed = order.items.every((item) => item.status === "served");
-    // И заказ еще не в статусе served
     const notAlreadyServed = order.status !== "served";
-
     return allServed && notAlreadyServed;
   };
 
@@ -371,15 +482,20 @@ const WaiterTable = () => {
     return order.status === "served";
   };
 
-  // Форматирование времени бронирования с учетом временной зоны
-  const formatReservationTime = (dateString) => {
-    const date = new Date(dateString);
-    date.setHours(date.getHours() + 3);
-    return date.toLocaleString("ru-RU");
+  // Функция для фильтрации бронирований на сегодня
+  const getTodayReservations = () => {
+    const today = new Date().toISOString().split("T")[0];
+    return reservations.filter((reservation) => {
+      const reservationDate = new Date(reservation.reservedFrom)
+        .toISOString()
+        .split("T")[0];
+      return reservationDate === today;
+    });
   };
 
   const activeOrder = orders.length > 0 ? orders[0] : null;
   const orderStatusInfo = activeOrder ? getOrderStatusInfo(activeOrder) : null;
+  const todayReservations = getTodayReservations();
 
   if (loading) {
     return (
@@ -478,6 +594,11 @@ const WaiterTable = () => {
               <div className="alert alert-danger">
                 <i className="bi bi-exclamation-triangle me-2"></i>
                 {error}
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setError("")}
+                ></button>
               </div>
             </div>
           </div>
@@ -489,6 +610,11 @@ const WaiterTable = () => {
               <div className="alert alert-success">
                 <i className="bi bi-check-circle me-2"></i>
                 {success}
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setSuccess("")}
+                ></button>
               </div>
             </div>
           </div>
@@ -577,7 +703,6 @@ const WaiterTable = () => {
                               {orderStatusInfo?.label}
                             </span>
 
-                            {/* КНОПКИ ДЛЯ УПРАВЛЕНИЯ СТАТУСАМИ */}
                             {canMarkOrderServed(activeOrder) && (
                               <button
                                 className="btn btn-info btn-sm me-2"
@@ -599,10 +724,16 @@ const WaiterTable = () => {
                               </button>
                             )}
                             <button
-                              className="btn btn-primary btn-sm"
+                              className="btn btn-primary btn-sm me-2"
                               onClick={() => handleAddToOrder(activeOrder)}
                             >
                               Добавить блюда
+                            </button>
+                            <button
+                              className="btn btn-success btn-sm"
+                              onClick={() => handleCloseOrder(activeOrder.id)}
+                            >
+                              Закрыть заказ
                             </button>
                           </div>
                         </div>
@@ -665,7 +796,6 @@ const WaiterTable = () => {
                                     </small>
                                   </td>
                                   <td>
-                                    {/* КНОПКА: Подать блюдо */}
                                     {canServeDish(item) && (
                                       <button
                                         className="btn btn-success btn-sm"
@@ -728,7 +858,7 @@ const WaiterTable = () => {
                 {activeTab === "reservations" && (
                   <div>
                     <div className="d-flex justify-content-between align-items-center mb-4">
-                      <h5>Бронирования столика</h5>
+                      <h5>Бронирования столика на сегодня</h5>
                       <button
                         className="btn btn-outline-warning btn-sm"
                         onClick={handleCreateReservation}
@@ -738,11 +868,11 @@ const WaiterTable = () => {
                       </button>
                     </div>
 
-                    {reservations.length === 0 ? (
+                    {todayReservations.length === 0 ? (
                       <div className="text-center py-4">
                         <i className="bi bi-calendar-x display-1 text-muted"></i>
                         <p className="text-muted mt-3">
-                          Нет бронирований для этого столика
+                          Нет бронирований для этого столика на сегодня
                         </p>
                       </div>
                     ) : (
@@ -758,18 +888,16 @@ const WaiterTable = () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {reservations.map((reservation) => (
+                            {todayReservations.map((reservation) => (
                               <tr key={reservation.id}>
                                 <td>{reservation.customerName}</td>
                                 <td>{reservation.customerPhone}</td>
                                 <td>
-                                  {formatReservationTime(
+                                  {formatLocalDateTime(
                                     reservation.reservedFrom
                                   )}{" "}
                                   -{" "}
-                                  {formatReservationTime(
-                                    reservation.reservedTo
-                                  )}
+                                  {formatLocalDateTime(reservation.reservedTo)}
                                 </td>
                                 <td>
                                   <span className="badge bg-secondary">
@@ -783,14 +911,18 @@ const WaiterTable = () => {
                                         ? "bg-warning"
                                         : reservation.status === "seated"
                                         ? "bg-success"
-                                        : "bg-secondary"
+                                        : reservation.status === "completed"
+                                        ? "bg-secondary"
+                                        : "bg-light text-dark"
                                     }`}
                                   >
                                     {reservation.status === "confirmed"
                                       ? "Подтверждено"
                                       : reservation.status === "seated"
                                       ? "Гости за столом"
-                                      : "Завершено"}
+                                      : reservation.status === "completed"
+                                      ? "Завершено"
+                                      : reservation.status}
                                   </span>
                                 </td>
                               </tr>
@@ -943,6 +1075,11 @@ const WaiterTable = () => {
                     ? `Добавить блюда в заказ #${selectedOrder.id}`
                     : `Новый заказ для столика ${table.name}`}
                 </h5>
+                {selectedOrder && (
+                  <span className="badge bg-info ms-2">
+                    Режим добавления блюд
+                  </span>
+                )}
                 <button
                   type="button"
                   className="btn-close"
@@ -1027,7 +1164,11 @@ const WaiterTable = () => {
                     <div className="col-12">
                       <div className="card">
                         <div className="card-header d-flex justify-content-between align-items-center">
-                          <h6 className="mb-0">Блюда в заказе</h6>
+                          <h6 className="mb-0">
+                            {selectedOrder
+                              ? "Новые блюда в заказе"
+                              : "Блюда в заказе"}
+                          </h6>
                           <div>
                             <span className="badge bg-primary me-2">
                               {orderForm.items.length} блюд
@@ -1042,7 +1183,9 @@ const WaiterTable = () => {
                         <div className="card-body">
                           {orderForm.items.length === 0 ? (
                             <p className="text-muted text-center mb-0">
-                              Нет добавленных блюд
+                              {selectedOrder
+                                ? "Добавьте новые блюда в заказ"
+                                : "Нет добавленных блюд"}
                             </p>
                           ) : (
                             <div className="table-responsive">
@@ -1054,12 +1197,20 @@ const WaiterTable = () => {
                                     <th>Кол-во</th>
                                     <th>Сумма</th>
                                     <th>Примечания</th>
+                                    <th width="80">Действия</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {orderForm.items.map((item) => (
+                                  {orderForm.items.map((item, index) => (
                                     <tr key={item.id}>
-                                      <td>{item.dish?.name}</td>
+                                      <td>
+                                        {item.dish?.name}
+                                        {selectedOrder && (
+                                          <span className="badge bg-success ms-1">
+                                            Новое
+                                          </span>
+                                        )}
+                                      </td>
                                       <td>{item.price} ₽</td>
                                       <td>{item.quantity}</td>
                                       <td>
@@ -1074,6 +1225,22 @@ const WaiterTable = () => {
                                           {item.notes || ""}
                                         </small>
                                       </td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline-danger btn-sm"
+                                          onClick={() => {
+                                            setOrderForm((prev) => ({
+                                              ...prev,
+                                              items: prev.items.filter(
+                                                (_, i) => i !== index
+                                              ),
+                                            }));
+                                          }}
+                                        >
+                                          <i className="bi bi-trash"></i>
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -1082,7 +1249,7 @@ const WaiterTable = () => {
                                     <td colSpan="3" className="text-end">
                                       <strong>Итого:</strong>
                                     </td>
-                                    <td colSpan="2">
+                                    <td colSpan="3">
                                       <strong>
                                         {calculateOrderTotal(
                                           orderForm.items
@@ -1113,7 +1280,7 @@ const WaiterTable = () => {
                     className="btn btn-primary"
                     disabled={orderForm.items.length === 0}
                   >
-                    {selectedOrder ? "Обновить заказ" : "Создать заказ"}
+                    {selectedOrder ? "Добавить блюда" : "Создать заказ"}
                   </button>
                 </div>
               </form>

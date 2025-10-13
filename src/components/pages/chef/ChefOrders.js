@@ -16,7 +16,17 @@ const ChefOrders = () => {
     try {
       setLoading(true);
       const response = await $authHost.get("/orders/kitchen");
-      setOrders(response.data);
+
+      // Фильтруем заказы, чтобы показать только те, у которых есть блюда в статусе ordered или preparing
+      const filteredOrders = response.data.filter(
+        (order) =>
+          order.items &&
+          order.items.some((item) =>
+            ["ordered", "preparing"].includes(item.status)
+          )
+      );
+
+      setOrders(filteredOrders);
     } catch (error) {
       console.error("Ошибка загрузки заказов:", error);
       setError("Не удалось загрузить заказы");
@@ -24,30 +34,6 @@ const ChefOrders = () => {
       setLoading(false);
     }
   }, []);
-
-  const takeOrder = async (orderId) => {
-    try {
-      await $authHost.put(`/orders/${orderId}/status`, {
-        status: "in_progress",
-      });
-      setSuccess("Заказ взят в работу");
-      loadOrders();
-    } catch (error) {
-      console.error("Ошибка взятия заказа:", error);
-      setError("Не удалось взять заказ");
-    }
-  };
-
-  const completeOrder = async (orderId) => {
-    try {
-      await $authHost.put(`/orders/${orderId}/status`, { status: "ready" });
-      setSuccess("Заказ готов к подаче");
-      loadOrders();
-    } catch (error) {
-      console.error("Ошибка завершения заказа:", error);
-      setError("Не удалось завершить заказ");
-    }
-  };
 
   const takeDish = async (orderItemId) => {
     try {
@@ -81,17 +67,23 @@ const ChefOrders = () => {
     navigate("/chef");
   };
 
-  const getOrderBadge = (status) => {
-    switch (status) {
-      case "open":
-        return <span className="badge bg-warning">Ожидает</span>;
-      case "in_progress":
-        return <span className="badge bg-primary">В работе</span>;
-      case "ready":
-        return <span className="badge bg-success">Готов</span>;
-      default:
-        return <span className="badge bg-secondary">{status}</span>;
-    }
+  const getOrderBadge = (order) => {
+    const hasOrderedItems = order.items?.some(
+      (item) => item.status === "ordered"
+    );
+    const hasPreparingItems = order.items?.some(
+      (item) => item.status === "preparing"
+    );
+    const hasReadyItems = order.items?.some((item) => item.status === "ready");
+
+    if (hasOrderedItems)
+      return <span className="badge bg-warning">Новые блюда</span>;
+    if (hasPreparingItems)
+      return <span className="badge bg-primary">В работе</span>;
+    if (hasReadyItems)
+      return <span className="badge bg-success">Готовы к подаче</span>;
+
+    return <span className="badge bg-secondary">Завершен</span>;
   };
 
   const getDishBadge = (status, chefId) => {
@@ -100,7 +92,7 @@ const ChefOrders = () => {
     if (status === "preparing" && chefId === user.id)
       return <span className="badge bg-primary">Вы готовите</span>;
     if (status === "preparing")
-      return <span className="badge bg-info">Готовится</span>;
+      return <span className="badge bg-info">Готовит другой повар</span>;
     return <span className="badge bg-secondary">Ожидает</span>;
   };
 
@@ -115,6 +107,13 @@ const ChefOrders = () => {
   // Функция для проверки, можно ли отметить блюдо как готовое
   const canCompleteDish = (item) => {
     return item.status === "preparing" && item.chefId === user.id;
+  };
+
+  // Функция для фильтрации блюд - показываем только те, которые нужно готовить
+  const getKitchenItems = (items) => {
+    return items.filter((item) =>
+      ["ordered", "preparing", "ready"].includes(item.status)
+    );
   };
 
   if (loading) {
@@ -152,10 +151,10 @@ const ChefOrders = () => {
                       <div>
                         <h1 className="h3 mb-2">
                           <i className="bi bi-list-check me-2"></i>
-                          Активные заказы
+                          Кухня - Активные заказы
                         </h1>
                         <p className="text-muted mb-0">
-                          Управление текущими заказами на кухне
+                          Управление приготовлением блюд
                         </p>
                       </div>
                     </div>
@@ -205,89 +204,98 @@ const ChefOrders = () => {
                     <p className="text-muted">Все заказы выполнены</p>
                   </div>
                 ) : (
-                  orders.map((order) => (
-                    <div key={order.id} className="card mb-4">
-                      <div className="card-header d-flex justify-content-between align-items-center">
-                        <div>
-                          <h5 className="mb-0">Заказ #{order.id}</h5>
-                          <small className="text-muted">
-                            Стол: {order.table?.name || "Не указан"} | Время:{" "}
-                            {new Date(order.createdAt).toLocaleTimeString()}
-                          </small>
+                  orders.map((order) => {
+                    const kitchenItems = getKitchenItems(order.items || []);
+
+                    return (
+                      <div key={order.id} className="card mb-4">
+                        <div className="card-header d-flex justify-content-between align-items-center">
+                          <div>
+                            <h5 className="mb-0">Заказ #{order.id}</h5>
+                            <small className="text-muted">
+                              Стол: {order.table?.name || "Не указан"} | Время:{" "}
+                              {new Date(order.createdAt).toLocaleTimeString()} |
+                              Официант:{" "}
+                              {order.waiter?.firstName || "Не назначен"}
+                            </small>
+                          </div>
+                          <div>{getOrderBadge(order)}</div>
                         </div>
-                        <div>
-                          {getOrderBadge(order.status)}
-                          {order.status === "open" && (
-                            <button
-                              className="btn btn-sm btn-primary ms-2"
-                              onClick={() => takeOrder(order.id)}
-                            >
-                              Взять заказ
-                            </button>
-                          )}
-                          {order.status === "in_progress" && (
-                            <button
-                              className="btn btn-sm btn-success ms-2"
-                              onClick={() => completeOrder(order.id)}
-                            >
-                              Заказ готов
-                            </button>
+                        <div className="card-body">
+                          {kitchenItems.length === 0 ? (
+                            <div className="text-center py-3">
+                              <p className="text-muted mb-0">
+                                Все блюда этого заказа поданы или завершены
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="table-responsive">
+                              <table className="table table-sm">
+                                <thead>
+                                  <tr>
+                                    <th>Блюдо</th>
+                                    <th>Количество</th>
+                                    <th>Примечания</th>
+                                    <th>Статус</th>
+                                    <th>Действия</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {kitchenItems.map((item) => (
+                                    <tr key={item.id}>
+                                      <td>
+                                        <strong>{item.dish?.name}</strong>
+                                        <br />
+                                        <small className="text-muted">
+                                          {item.dish?.category?.name ||
+                                            "Без категории"}
+                                        </small>
+                                      </td>
+                                      <td>{item.quantity}</td>
+                                      <td>
+                                        <small className="text-muted">
+                                          {item.notes || "-"}
+                                        </small>
+                                      </td>
+                                      <td>
+                                        {getDishBadge(item.status, item.chefId)}
+                                      </td>
+                                      <td>
+                                        {canTakeDish(item) && (
+                                          <button
+                                            className="btn btn-sm btn-outline-primary me-1"
+                                            onClick={() => takeDish(item.id)}
+                                            disabled={
+                                              item.status === "preparing" &&
+                                              item.chefId !== user.id
+                                            }
+                                          >
+                                            {item.status === "ordered"
+                                              ? "Взять"
+                                              : "Продолжить"}
+                                          </button>
+                                        )}
+                                        {canCompleteDish(item) && (
+                                          <button
+                                            className="btn btn-sm btn-outline-success"
+                                            onClick={() =>
+                                              completeDish(item.id)
+                                            }
+                                          >
+                                            Готово
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           )}
                         </div>
                       </div>
-                      <div className="card-body">
-                        <div className="table-responsive">
-                          <table className="table table-sm">
-                            <thead>
-                              <tr>
-                                <th>Блюдо</th>
-                                <th>Количество</th>
-                                <th>Статус</th>
-                                <th>Действия</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {order.items?.map((item) => (
-                                <tr key={item.id}>
-                                  <td>
-                                    <strong>{item.dish?.name}</strong>
-                                    <br />
-                                    <small className="text-muted">
-                                      {item.dish?.category?.name}
-                                    </small>
-                                  </td>
-                                  <td>{item.quantity}</td>
-                                  <td>
-                                    {getDishBadge(item.status, item.chefId)}
-                                  </td>
-                                  <td>
-                                    {canTakeDish(item) && (
-                                      <button
-                                        className="btn btn-sm btn-outline-primary me-1"
-                                        onClick={() => takeDish(item.id)}
-                                      >
-                                        {item.status === "ordered"
-                                          ? "Взять"
-                                          : "Продолжить"}
-                                      </button>
-                                    )}
-                                    {canCompleteDish(item) && (
-                                      <button
-                                        className="btn btn-sm btn-outline-success"
-                                        onClick={() => completeDish(item.id)}
-                                      >
-                                        Готово
-                                      </button>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>

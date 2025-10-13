@@ -2,6 +2,11 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../../NavBar";
 import { $authHost } from "../../../http";
+import {
+  formatLocalDateTime,
+  localToUTC,
+  formatForDateTimeLocal,
+} from "../../../utils/dateUtils";
 
 const WaiterReservations = () => {
   const navigate = useNavigate();
@@ -28,38 +33,39 @@ const WaiterReservations = () => {
     status: "confirmed",
   });
 
+  // Исправленный useEffect без ESLint warning
   useEffect(() => {
-    loadData();
-  }, [filters.date]);
+    const loadData = async () => {
+      try {
+        setLoading(true);
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-
-      // Загружаем бронирования
-      const reservationsResponse = await $authHost.get(
-        `/reservations?date=${filters.date}`
-      );
-      let filteredReservations = reservationsResponse.data;
-
-      if (filters.status !== "all") {
-        filteredReservations = filteredReservations.filter(
-          (reservation) => reservation.status === filters.status
+        // Загружаем бронирования
+        const reservationsResponse = await $authHost.get(
+          `/reservations?date=${filters.date}`
         );
+        let filteredReservations = reservationsResponse.data;
+
+        if (filters.status !== "all") {
+          filteredReservations = filteredReservations.filter(
+            (reservation) => reservation.status === filters.status
+          );
+        }
+
+        setReservations(filteredReservations);
+
+        // Загружаем столики
+        const tablesResponse = await $authHost.get("/tables");
+        setTables(tablesResponse.data);
+      } catch (error) {
+        console.error("Ошибка загрузки данных:", error);
+        setError("Не удалось загрузить данные");
+      } finally {
+        setLoading(false);
       }
+    };
 
-      setReservations(filteredReservations);
-
-      // Загружаем столики
-      const tablesResponse = await $authHost.get("/tables");
-      setTables(tablesResponse.data);
-    } catch (error) {
-      console.error("Ошибка загрузки данных:", error);
-      setError("Не удалось загрузить данные");
-    } finally {
-      setLoading(false);
-    }
-  };
+    loadData();
+  }, [filters.date, filters.status]);
 
   const handleBack = () => {
     navigate("/waiter");
@@ -68,16 +74,23 @@ const WaiterReservations = () => {
   const handleCreateReservation = () => {
     setEditingReservation(null);
     const now = new Date();
+
     const from = new Date(now.getTime() + 30 * 60000);
     const to = new Date(from.getTime() + 2 * 60 * 60000);
+
+    console.log("Создание брони (WaiterReservations):", {
+      now: now.toLocaleString("ru-RU"),
+      from: from.toLocaleString("ru-RU"),
+      to: to.toLocaleString("ru-RU"),
+    });
 
     setReservationForm({
       tableId: "",
       customerName: "",
       customerPhone: "",
       guestCount: 2,
-      reservedFrom: from.toISOString().slice(0, 16),
-      reservedTo: to.toISOString().slice(0, 16),
+      reservedFrom: formatForDateTimeLocal(from),
+      reservedTo: formatForDateTimeLocal(to),
       status: "confirmed",
     });
     setShowModal(true);
@@ -85,15 +98,25 @@ const WaiterReservations = () => {
 
   const handleEditReservation = (reservation) => {
     setEditingReservation(reservation);
+
+    // Прямое использование времени из базы данных
+    const reservedFrom = new Date(reservation.reservedFrom);
+    const reservedTo = new Date(reservation.reservedTo);
+
+    console.log("Редактирование брони:", {
+      fromDB: reservation.reservedFrom,
+      toDB: reservation.reservedTo,
+      fromLocal: reservedFrom.toLocaleString("ru-RU"),
+      toLocal: reservedTo.toLocaleString("ru-RU"),
+    });
+
     setReservationForm({
       tableId: reservation.tableId.toString(),
       customerName: reservation.customerName,
       customerPhone: reservation.customerPhone,
       guestCount: reservation.guestCount,
-      reservedFrom: new Date(reservation.reservedFrom)
-        .toISOString()
-        .slice(0, 16),
-      reservedTo: new Date(reservation.reservedTo).toISOString().slice(0, 16),
+      reservedFrom: formatForDateTimeLocal(reservedFrom),
+      reservedTo: formatForDateTimeLocal(reservedTo),
       status: reservation.status,
     });
     setShowModal(true);
@@ -107,8 +130,8 @@ const WaiterReservations = () => {
         customerName: reservationForm.customerName,
         customerPhone: reservationForm.customerPhone,
         guestCount: reservationForm.guestCount,
-        reservedFrom: new Date(reservationForm.reservedFrom).toISOString(),
-        reservedTo: new Date(reservationForm.reservedTo).toISOString(),
+        reservedFrom: localToUTC(reservationForm.reservedFrom),
+        reservedTo: localToUTC(reservationForm.reservedTo),
         status: reservationForm.status,
       };
 
@@ -124,7 +147,20 @@ const WaiterReservations = () => {
       }
 
       setShowModal(false);
-      await loadData();
+
+      // Перезагружаем данные
+      const reservationsResponse = await $authHost.get(
+        `/reservations?date=${filters.date}`
+      );
+      let filteredReservations = reservationsResponse.data;
+
+      if (filters.status !== "all") {
+        filteredReservations = filteredReservations.filter(
+          (reservation) => reservation.status === filters.status
+        );
+      }
+
+      setReservations(filteredReservations);
     } catch (error) {
       console.error("Ошибка сохранения бронирования:", error);
       setError(
@@ -139,7 +175,20 @@ const WaiterReservations = () => {
         status: newStatus,
       });
       setSuccess("Статус бронирования изменен");
-      await loadData();
+
+      // Обновляем данные
+      const reservationsResponse = await $authHost.get(
+        `/reservations?date=${filters.date}`
+      );
+      let filteredReservations = reservationsResponse.data;
+
+      if (filters.status !== "all") {
+        filteredReservations = filteredReservations.filter(
+          (reservation) => reservation.status === filters.status
+        );
+      }
+
+      setReservations(filteredReservations);
     } catch (error) {
       console.error("Ошибка изменения статуса:", error);
       setError("Не удалось изменить статус бронирования");
@@ -156,7 +205,20 @@ const WaiterReservations = () => {
     try {
       await $authHost.delete(`/reservations/${reservation.id}`);
       setSuccess("Бронирование удалено");
-      await loadData();
+
+      // Обновляем данные
+      const reservationsResponse = await $authHost.get(
+        `/reservations?date=${filters.date}`
+      );
+      let filteredReservations = reservationsResponse.data;
+
+      if (filters.status !== "all") {
+        filteredReservations = filteredReservations.filter(
+          (reservation) => reservation.status === filters.status
+        );
+      }
+
+      setReservations(filteredReservations);
     } catch (error) {
       console.error("Ошибка удаления бронирования:", error);
       setError("Не удалось удалить бронирование");
@@ -181,16 +243,6 @@ const WaiterReservations = () => {
       completed: "secondary",
     };
     return colorMap[status] || "light";
-  };
-
-  const formatDateTime = (dateString) => {
-    return new Date(dateString).toLocaleString("ru-RU", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
   };
 
   const getTableName = (tableId) => {
@@ -273,6 +325,11 @@ const WaiterReservations = () => {
               <div className="alert alert-danger">
                 <i className="bi bi-exclamation-triangle me-2"></i>
                 {error}
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setError("")}
+                ></button>
               </div>
             </div>
           </div>
@@ -284,6 +341,11 @@ const WaiterReservations = () => {
               <div className="alert alert-success">
                 <i className="bi bi-check-circle me-2"></i>
                 {success}
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setSuccess("")}
+                ></button>
               </div>
             </div>
           </div>
@@ -324,7 +386,34 @@ const WaiterReservations = () => {
                   <div className="col-md-4 d-flex align-items-end">
                     <button
                       className="btn btn-outline-secondary w-100"
-                      onClick={loadData}
+                      onClick={() => {
+                        const loadData = async () => {
+                          try {
+                            setLoading(true);
+                            const reservationsResponse = await $authHost.get(
+                              `/reservations?date=${filters.date}`
+                            );
+                            let filteredReservations =
+                              reservationsResponse.data;
+
+                            if (filters.status !== "all") {
+                              filteredReservations =
+                                filteredReservations.filter(
+                                  (reservation) =>
+                                    reservation.status === filters.status
+                                );
+                            }
+
+                            setReservations(filteredReservations);
+                          } catch (error) {
+                            console.error("Ошибка загрузки данных:", error);
+                            setError("Не удалось загрузить данные");
+                          } finally {
+                            setLoading(false);
+                          }
+                        };
+                        loadData();
+                      }}
                     >
                       <i className="bi bi-arrow-clockwise me-1"></i>
                       Обновить
@@ -424,11 +513,11 @@ const WaiterReservations = () => {
                             <div className="small">
                               <div>
                                 <strong>Начало:</strong>{" "}
-                                {formatDateTime(reservation.reservedFrom)}
+                                {formatLocalDateTime(reservation.reservedFrom)}
                               </div>
                               <div>
                                 <strong>Конец:</strong>{" "}
-                                {formatDateTime(reservation.reservedTo)}
+                                {formatLocalDateTime(reservation.reservedTo)}
                               </div>
                             </div>
                           </td>

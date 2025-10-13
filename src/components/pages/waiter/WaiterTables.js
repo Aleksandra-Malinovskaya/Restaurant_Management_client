@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../../NavBar";
 import { $authHost } from "../../../http";
+import { formatLocalDateTime } from "../../../utils/dateUtils";
 
 const WaiterTables = () => {
   const navigate = useNavigate();
@@ -24,10 +25,12 @@ const WaiterTables = () => {
       const tablesResponse = await $authHost.get("/tables");
       setTables(tablesResponse.data);
 
-      // Загружаем активные заказы
+      // Загружаем активные заказы (ВКЛЮЧАЯ served и payment)
       const ordersResponse = await $authHost.get("/orders");
       const activeOrders = ordersResponse.data.filter((order) =>
-        ["open", "in_progress", "ready"].includes(order.status)
+        ["open", "in_progress", "ready", "served", "payment"].includes(
+          order.status
+        )
       );
       setOrders(activeOrders);
 
@@ -52,38 +55,114 @@ const WaiterTables = () => {
     navigate(`/waiter/table/${table.id}`);
   };
 
-  // В функции getTableStatus - добавим проверку на payment
+  // ИСПРАВЛЕННАЯ функция определения статуса столика с учетом закрытых заказов
   const getTableStatus = (table) => {
     const tableOrders = orders.filter(
       (order) =>
         order.tableId === table.id &&
-        ["open", "in_progress", "ready", "payment"].includes(order.status) // ДОБАВЛЕН payment
+        ["open", "in_progress", "ready", "served", "payment"].includes(
+          order.status
+        )
     );
 
     const now = new Date();
-    const currentReservation = reservations.find(
-      (reservation) =>
-        reservation.tableId === table.id &&
-        new Date(reservation.reservedFrom) <= now &&
-        new Date(reservation.reservedTo) >= now &&
-        ["confirmed", "seated"].includes(reservation.status)
-    );
 
+    // Исправляем проверку бронирований - добавляем коррекцию времени
+    const currentReservation = reservations.find((reservation) => {
+      if (reservation.tableId !== table.id) return false;
+
+      const reservedFrom = new Date(reservation.reservedFrom);
+      const reservedTo = new Date(reservation.reservedTo);
+
+      // КОРРЕКТИРОВКА ВРЕМЕНИ ДЛЯ СРАВНЕНИЯ (UTC+3)
+      const timezoneOffset = now.getTimezoneOffset() * 60000;
+      const localNow = new Date(
+        now.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedFrom = new Date(
+        reservedFrom.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedTo = new Date(
+        reservedTo.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+
+      return (
+        localReservedFrom <= localNow &&
+        localReservedTo >= localNow &&
+        ["confirmed", "seated"].includes(reservation.status)
+      );
+    });
+
+    // ВАЖНОЕ ИЗМЕНЕНИЕ: если есть активные заказы - стол ЗАНЯТ
     if (tableOrders.length > 0) return "occupied";
-    if (currentReservation && currentReservation.status === "seated")
+
+    // Если заказов нет, но есть активная бронь со статусом "seated" - проверяем время
+    if (currentReservation && currentReservation.status === "seated") {
+      // Если время брони еще не истекло, но заказов нет - стол все равно ЗАНЯТ
+      // (гости могут просто отдыхать)
       return "occupied";
+    }
+
     if (currentReservation && currentReservation.status === "confirmed")
       return "reserved";
+
+    // ДОБАВЛЯЕМ ПРОВЕРКУ НА СКОРОЕ БРОНИРОВАНИЕ
+    const soon = new Date(now.getTime() + 30 * 60000); // 30 минут
+    const upcomingReservation = reservations.find((reservation) => {
+      if (reservation.tableId !== table.id) return false;
+
+      const reservedFrom = new Date(reservation.reservedFrom);
+      const reservedTo = new Date(reservation.reservedTo);
+
+      // КОРРЕКТИРОВКА ВРЕМЕНИ
+      const timezoneOffset = now.getTimezoneOffset() * 60000;
+      const localSoon = new Date(
+        soon.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedFrom = new Date(
+        reservedFrom.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedTo = new Date(
+        reservedTo.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+
+      return (
+        localReservedFrom <= localSoon &&
+        localReservedTo > now &&
+        ["confirmed", "seated"].includes(reservation.status)
+      );
+    });
+
+    if (upcomingReservation) return "reserved_soon";
 
     return "free";
   };
 
+  // Обновите функцию getStatusText
+  const getStatusText = (status) => {
+    switch (status) {
+      case "occupied":
+        return "Занят";
+      case "reserved":
+        return "Забронирован";
+      case "reserved_soon":
+        return "Скоро бронь";
+      case "free":
+        return "Свободен";
+      default:
+        return "Неизвестно";
+    }
+  };
+
+  // Обновите функцию getStatusColor
   const getStatusColor = (status) => {
     switch (status) {
       case "occupied":
         return "danger";
       case "reserved":
         return "warning";
+      case "reserved_soon":
+        return "info";
       case "free":
         return "success";
       default:
@@ -91,17 +170,77 @@ const WaiterTables = () => {
     }
   };
 
-  const getStatusText = (status) => {
-    switch (status) {
-      case "occupied":
-        return "Занят";
-      case "reserved":
-        return "Забронирован";
-      case "free":
-        return "Свободен";
-      default:
-        return "Неизвестно";
+  // Функция для получения информации о бронировании столика
+  const getTableReservationInfo = (tableId) => {
+    const now = new Date();
+    const tableReservations = reservations.filter((r) => r.tableId === tableId);
+
+    // Текущее бронирование
+    const currentReservation = tableReservations.find((reservation) => {
+      const reservedFrom = new Date(reservation.reservedFrom);
+      const reservedTo = new Date(reservation.reservedTo);
+
+      const timezoneOffset = now.getTimezoneOffset() * 60000;
+      const localNow = new Date(
+        now.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedFrom = new Date(
+        reservedFrom.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedTo = new Date(
+        reservedTo.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+
+      return (
+        localReservedFrom <= localNow &&
+        localReservedTo >= localNow &&
+        ["confirmed", "seated"].includes(reservation.status)
+      );
+    });
+
+    if (currentReservation) {
+      return {
+        type: "current",
+        reservation: currentReservation,
+        text: `Бронь до: ${formatLocalDateTime(currentReservation.reservedTo)}`,
+      };
     }
+
+    // Ближайшее бронирование
+    const soon = new Date(now.getTime() + 30 * 60000);
+    const upcomingReservation = tableReservations.find((reservation) => {
+      const reservedFrom = new Date(reservation.reservedFrom);
+      const reservedTo = new Date(reservation.reservedTo);
+
+      const timezoneOffset = now.getTimezoneOffset() * 60000;
+      const localSoon = new Date(
+        soon.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedFrom = new Date(
+        reservedFrom.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+      const localReservedTo = new Date(
+        reservedTo.getTime() + timezoneOffset + 3 * 60 * 60000
+      );
+
+      return (
+        localReservedFrom <= localSoon &&
+        localReservedTo > now &&
+        ["confirmed", "seated"].includes(reservation.status)
+      );
+    });
+
+    if (upcomingReservation) {
+      return {
+        type: "upcoming",
+        reservation: upcomingReservation,
+        text: `Бронь с: ${formatLocalDateTime(
+          upcomingReservation.reservedFrom
+        )}`,
+      };
+    }
+
+    return null;
   };
 
   // Фильтрация столиков
@@ -114,6 +253,52 @@ const WaiterTables = () => {
 
     return matchesStatus && matchesSearch;
   });
+
+  // Функция для получения текста статуса заказа
+  const getOrderStatusText = (status) => {
+    switch (status) {
+      case "open":
+        return "Открыт";
+      case "in_progress":
+        return "Готовится";
+      case "ready":
+        return "Готов";
+      case "served":
+        return "Подано";
+      case "payment":
+        return "Ожидает оплаты";
+      default:
+        return status;
+    }
+  };
+
+  // Функция для получения цвета статуса заказа
+  const getOrderStatusColor = (status) => {
+    switch (status) {
+      case "open":
+        return "primary";
+      case "in_progress":
+        return "warning";
+      case "ready":
+        return "success";
+      case "served":
+        return "info";
+      case "payment":
+        return "warning";
+      default:
+        return "secondary";
+    }
+  };
+
+  // Функция для расчета суммы заказа
+  const calculateOrderTotal = (items) => {
+    if (!items || !Array.isArray(items)) return 0;
+    return items.reduce((total, item) => {
+      const price = Number(item.price) || Number(item.itemPrice) || 0;
+      const quantity = Number(item.quantity) || 0;
+      return total + price * quantity;
+    }, 0);
+  };
 
   if (loading) {
     return (
@@ -218,6 +403,7 @@ const WaiterTables = () => {
                       <option value="free">Свободен</option>
                       <option value="occupied">Занят</option>
                       <option value="reserved">Забронирован</option>
+                      <option value="reserved_soon">Скоро бронь</option>
                     </select>
                   </div>
                 </div>
@@ -244,6 +430,7 @@ const WaiterTables = () => {
                     );
                     const currentOrder =
                       tableOrders.length > 0 ? tableOrders[0] : null;
+                    const reservationInfo = getTableReservationInfo(table.id);
 
                     return (
                       <div
@@ -298,6 +485,8 @@ const WaiterTables = () => {
                                         ? "bi-person-check-fill"
                                         : status === "reserved"
                                         ? "bi-clock-fill"
+                                        : status === "reserved_soon"
+                                        ? "bi-clock-history"
                                         : "bi-person-plus"
                                     }
                                   `}
@@ -308,29 +497,40 @@ const WaiterTables = () => {
                               </h5>
                             </div>
 
+                            {/* Информация о бронировании */}
+                            {reservationInfo && (
+                              <div className="mb-2 p-2 bg-light rounded">
+                                <div className="small text-muted">
+                                  <i className="bi bi-calendar-event me-1"></i>
+                                  {reservationInfo.text}
+                                </div>
+                                {reservationInfo.reservation && (
+                                  <div className="small">
+                                    <strong>Клиент:</strong>{" "}
+                                    {reservationInfo.reservation.customerName}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {currentOrder && (
                               <div className="mb-3 p-2 bg-light rounded">
                                 <div className="d-flex justify-content-between align-items-center mb-2">
                                   <small className="text-muted">Заказ:</small>
                                   <span
-                                    className={`badge bg-${
-                                      currentOrder.status === "ready"
-                                        ? "success"
-                                        : currentOrder.status === "in_progress"
-                                        ? "warning"
-                                        : "primary"
-                                    }`}
+                                    className={`badge bg-${getOrderStatusColor(
+                                      currentOrder.status
+                                    )}`}
                                   >
-                                    {currentOrder.status === "ready"
-                                      ? "Готов"
-                                      : currentOrder.status === "in_progress"
-                                      ? "Готовится"
-                                      : "Открыт"}
+                                    {getOrderStatusText(currentOrder.status)}
                                   </span>
                                 </div>
                                 <div className="small">
                                   <strong>Сумма:</strong>{" "}
-                                  {currentOrder.totalAmount} ₽
+                                  {calculateOrderTotal(
+                                    currentOrder.items || []
+                                  )}{" "}
+                                  ₽
                                 </div>
                                 <div className="small">
                                   <strong>Блюд:</strong>{" "}
