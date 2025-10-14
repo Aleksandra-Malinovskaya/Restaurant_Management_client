@@ -46,7 +46,7 @@ const Navbar = () => {
       <div className="container-fluid">
         <span className="navbar-brand mb-0 h1">
           <i className="bi bi-shop me-2"></i>
-          Ресторан "DINOSER"
+          Ресторан
         </span>
 
         <div className="navbar-nav ms-auto">
