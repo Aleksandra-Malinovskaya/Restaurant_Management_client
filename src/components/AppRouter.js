@@ -14,7 +14,6 @@ import Auth from "./pages/Auth";
 import Admin from "./pages/admin/Admin";
 import Waiter from "./pages/waiter/Waiter";
 import Chef from "./pages/chef/Chef";
-import Trainee from "./pages/Trainee";
 import AdminPanel from "./pages/admins/AdminPanel";
 
 // Админские страницы управления
@@ -39,6 +38,23 @@ import WaiterTables from "./pages/waiter/WaiterTables";
 import AdminSettings from "./pages/admins/AdminSettings";
 import TablesManagementAdmin from "./pages/admins/TablesManagementAdmin";
 
+import Tranee from "./pages/trainee/Tranee";
+import TraneeMenu from "./pages/trainee/TraneeMenu";
+import TraneeSettings from "./pages/trainee/TraneeSettings";
+
+// Компонент для защиты маршрутов
+const ProtectedRoute = ({ role, requiredRole, children }) => {
+  if (!role) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  if (requiredRole && role !== requiredRole) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  return children;
+};
+
 const AppRouter = () => {
   const { user } = useAuth();
 
@@ -55,9 +71,11 @@ const AppRouter = () => {
 
     switch (user.role) {
       case SUPER_ADMIN_ROLE:
+        console.log("✅ Перенаправляем супер-админа на /admin");
+        return <Navigate to="/admin" replace />;
       case ADMIN_ROLE:
-        console.log("✅ Перенаправляем на AdminPanel");
-        return <Navigate to="/admin-panel" replace />; // исправлено на AdminPanel
+        console.log("✅ Перенаправляем админа на /admin-panel");
+        return <Navigate to="/admin-panel" replace />;
       case WAITER_ROLE:
         console.log("✅ Перенаправляем на Waiter");
         return <Navigate to="/waiter" replace />;
@@ -81,42 +99,234 @@ const AppRouter = () => {
       {/* Страницы авторизации */}
       <Route path="/auth" element={<Auth />} />
 
-      {/* Главные страницы по ролям */}
-      <Route path="/admin" element={<Admin />} />
-      <Route path="/waiter" element={<Waiter />} />
-      <Route path="/chef" element={<Chef />} />
-      <Route path="/trainee" element={<Trainee />} />
+      {/* Главные страницы по ролям с защитой */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <Admin />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin-panel"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <AdminPanel />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/waiter"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <Waiter />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chef"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={CHEF_ROLE}>
+            <Chef />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trainee"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={TRAINEE_ROLE}>
+            <Tranee />
+          </ProtectedRoute>
+        }
+      />
 
-      {/* Админские страницы управления */}
-      <Route path="/admin/users" element={<Users />} />
-      <Route path="/admin/dishes" element={<Dishes />} />
-      <Route path="/admin/categories" element={<Categories />} />
-      <Route path="/admin/tables" element={<TablesManagement />} />
-      <Route path="/admin/statistics" element={<Stats />} />
+      {/* Админские страницы управления (только для супер-админа) */}
+      <Route
+        path="/admin/users"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <Users />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/dishes"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <Dishes />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/categories"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <Categories />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/tables"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <TablesManagement />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/statistics"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={SUPER_ADMIN_ROLE}>
+            <Stats />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Маршруты повара */}
-      <Route path="/chef/orders" element={<ChefOrders />} />
-      <Route path="/chef/menu" element={<ChefMenu />} />
-      <Route path="/chef/history" element={<ChefHistory />} />
-      <Route path="/chef/settings" element={<ChefSettings />} />
+      <Route
+        path="/chef/orders"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={CHEF_ROLE}>
+            <ChefOrders />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chef/menu"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={CHEF_ROLE}>
+            <ChefMenu />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chef/history"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={CHEF_ROLE}>
+            <ChefHistory />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chef/settings"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={CHEF_ROLE}>
+            <ChefSettings />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Маршруты официанта */}
-      <Route path="/waiter/settings" element={<WaiterSettings />} />
-      <Route path="/waiter/menu" element={<WaiterMenu />} />
-      <Route path="/waiter/table/:tableId" element={<WaiterTable />} />
-      <Route path="/waiter/tables" element={<WaiterTables />} />
-      <Route path="/waiter/reservations" element={<WaiterReservations />} />
+      <Route
+        path="/waiter/settings"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <WaiterSettings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/waiter/menu"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <WaiterMenu />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/waiter/table/:tableId"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <WaiterTable />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/waiter/tables"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <WaiterTables />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/waiter/reservations"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={WAITER_ROLE}>
+            <WaiterReservations />
+          </ProtectedRoute>
+        }
+      />
 
-      {/* АДМИН-ПАНЕЛЬ МАРШРУТЫ - основная структура */}
-      <Route path="/admin-panel" element={<AdminPanel />} />
-      <Route path="/admin-panel/tables" element={<TablesManagementAdmin />} />
-      <Route path="/admin-panel/settings" element={<AdminSettings />} />
-      <Route path="/admin-panel/dishes" element={<Dishes />} />
-      <Route path="/admin-panel/categories" element={<Categories />} />
-      <Route path="/admin-panel/stats" element={<Stats />} />
+      {/* АДМИН-ПАНЕЛЬ МАРШРУТЫ (для обычных админов) */}
+      <Route
+        path="/admin-panel/tables"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <TablesManagementAdmin />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin-panel/settings"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <AdminSettings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin-panel/dishes"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <Dishes />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin-panel/categories"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <Categories />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin-panel/stats"
+        element={
+          <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
+            <Stats />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/tranee" element={<Tranee />} />
+      <Route path="/tranee/menu" element={<TraneeMenu />} />
+      <Route path="/tranee/settings" element={<TraneeSettings />} />
 
-      {/* УБРАТЬ ДУБЛИРУЮЩИЙСЯ МАРШРУТ - оставить только один */}
-      {/* <Route path="/admin/settings" element={<AdminSettings />} /> */}
+      {/* Страница "Не авторизован" */}
+      <Route
+        path="/unauthorized"
+        element={
+          <div className="container-fluid vh-100 bg-light d-flex justify-content-center align-items-center">
+            <div className="card shadow">
+              <div className="card-body text-center p-5">
+                <i className="bi bi-shield-exclamation display-1 text-warning"></i>
+                <h3 className="mt-3">Доступ запрещен</h3>
+                <p className="text-muted">
+                  У вас недостаточно прав для доступа к этой странице
+                </p>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => window.history.back()}
+                >
+                  Назад
+                </button>
+              </div>
+            </div>
+          </div>
+        }
+      />
 
       {/* Запасной маршрут */}
       <Route path="*" element={<Navigate to="/" replace />} />

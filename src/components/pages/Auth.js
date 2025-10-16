@@ -77,7 +77,7 @@ const Auth = () => {
             >
               <h4 className="mb-0">
                 <i className="bi bi-shop me-2"></i>
-                Ресторан "DINOSER"
+                Ресторан
               </h4>
               <small>Система управления</small>
             </div>
