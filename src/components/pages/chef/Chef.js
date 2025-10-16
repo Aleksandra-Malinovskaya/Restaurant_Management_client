@@ -3,6 +3,8 @@ import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { $authHost } from "../../../http";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const Chef = () => {
   const { user } = useAuth();
@@ -17,86 +19,7 @@ const Chef = () => {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const loadStatistics = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
-
-      const [ordersResponse, dishesResponse, orderItemsResponse] =
-        await Promise.all([
-          $authHost.get("/orders").catch(() => ({ data: [] })),
-          $authHost.get("/dishes").catch(() => ({ data: { rows: [] } })),
-          $authHost.get("/order-items").catch(() => ({ data: [] })),
-        ]);
-
-      const orders = Array.isArray(ordersResponse.data)
-        ? ordersResponse.data
-        : [];
-      const dishes = Array.isArray(dishesResponse.data?.rows)
-        ? dishesResponse.data.rows
-        : [];
-      const orderItems = Array.isArray(orderItemsResponse.data)
-        ? orderItemsResponse.data
-        : [];
-
-      // Статистика заказов
-      const activeOrders = orders.filter(
-        (order) => order.status === "open" || order.status === "in_progress"
-      ).length;
-
-      const preparingOrders = orders.filter(
-        (order) => order.status === "in_progress"
-      ).length;
-
-      const readyOrders = orders.filter(
-        (order) => order.status === "ready"
-      ).length;
-
-      // Блюда на стопе
-      const stoppedDishes = dishes.filter(
-        (dish) => dish.isStopped === true
-      ).length;
-
-      // Мои активные заказы (где я назначен поваром)
-      const myActiveOrders = orderItems.filter(
-        (item) => item.chefId === user?.id && item.status === "preparing"
-      ).length;
-
-      // Приготовлено сегодня
-      const today = new Date().toISOString().split("T")[0];
-      const todayPrepared = orderItems.filter((item) => {
-        const itemDate = item.updatedAt ? item.updatedAt.split("T")[0] : "";
-        return (
-          itemDate === today &&
-          item.status === "completed" &&
-          item.chefId === user?.id
-        );
-      }).length;
-
-      setStats({
-        activeOrders,
-        preparingOrders,
-        readyOrders,
-        stoppedDishes,
-        myActiveOrders,
-        todayPrepared,
-      });
-    } catch (error) {
-      console.error("Ошибка загрузки статистики:", error);
-      setError("Не удалось загрузить статистику");
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    loadStatistics();
-
-    // Обновление статистики каждые 30 секунд
-    const interval = setInterval(loadStatistics, 30000);
-    return () => clearInterval(interval);
-  }, [loadStatistics]);
+  const [notifications, setNotifications] = useState([]);
 
   const chefCards = [
     {
@@ -137,6 +60,188 @@ const Chef = () => {
     loadStatistics();
   };
 
+  const loadStatistics = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      // Получаем все необходимые данные
+      const [ordersResponse, dishesResponse, kitchenItemsResponse] =
+        await Promise.all([
+          $authHost.get("/orders/kitchen").catch(() => ({ data: [] })),
+          $authHost.get("/dishes").catch(() => ({ data: { rows: [] } })),
+          $authHost.get("/order-items/kitchen").catch(() => ({ data: [] })),
+        ]);
+
+      const orders = Array.isArray(ordersResponse.data)
+        ? ordersResponse.data
+        : [];
+      const dishes = Array.isArray(dishesResponse.data?.rows)
+        ? dishesResponse.data.rows
+        : dishesResponse.data || [];
+      const kitchenItems = Array.isArray(kitchenItemsResponse.data)
+        ? kitchenItemsResponse.data
+        : [];
+
+      console.log("Данные для статистики:", {
+        ordersCount: orders.length,
+        dishesCount: dishes.length,
+        kitchenItemsCount: kitchenItems.length,
+        kitchenItemsSample: kitchenItems.slice(0, 3), // Показываем первые 3 для отладки
+      });
+
+      // 1. АКТИВНЫЕ ЗАКАЗЫ - заказы, где есть хотя бы одно блюдо со статусом ordered, preparing или ready
+      const activeOrders = orders.filter((order) => {
+        if (!order.items || !Array.isArray(order.items)) return false;
+        return order.items.some((item) =>
+          ["ordered", "preparing", "ready"].includes(item.status)
+        );
+      }).length;
+
+      // 2. ЗАКАЗЫ В ПРИГОТОВЛЕНИИ - заказы, где есть хотя бы одно блюдо со статусом preparing
+      const preparingOrders = orders.filter((order) => {
+        if (!order.items || !Array.isArray(order.items)) return false;
+        return order.items.some((item) => item.status === "preparing");
+      }).length;
+
+      // 3. ЗАКАЗЫ ГОТОВЫЕ К ПОДАЧЕ - заказы со статусом ready
+      const readyOrders = orders.filter(
+        (order) => order.status === "ready"
+      ).length;
+
+      // 4. БЛЮДА НА СТОПЕ
+      const stoppedDishes = dishes.filter(
+        (dish) => dish.isStopped === true
+      ).length;
+
+      // 5. МОИ ТЕКУЩИЕ БЛЮДА
+      const myActiveOrders = kitchenItems.filter((item) => {
+        const isMyItem =
+          item.chefId === user?.id || (item.chef && item.chef.id === user?.id);
+        return isMyItem && item.status === "preparing";
+      }).length;
+
+      // 6. ПРИГОТОВЛЕНО СЕГОДНЯ - НОВАЯ ЛОГИКА
+      const today = new Date();
+      const todayStart = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate()
+      );
+
+      // Получаем ВСЕ заказы за сегодня для анализа
+      const allOrdersResponse = await $authHost.get("/orders");
+      const allOrders = Array.isArray(allOrdersResponse.data)
+        ? allOrdersResponse.data
+        : [];
+
+      // Собираем все блюда из всех заказов за сегодня
+      const allItemsToday = [];
+      allOrders.forEach((order) => {
+        if (order.items && Array.isArray(order.items)) {
+          const orderDate = new Date(order.createdAt);
+          // Если заказ создан сегодня
+          if (orderDate >= todayStart) {
+            order.items.forEach((item) => {
+              allItemsToday.push({
+                ...item,
+                orderCreatedAt: order.createdAt,
+                orderDate: orderDate,
+              });
+            });
+          }
+        }
+      });
+
+      const todayPrepared = allItemsToday.filter((item) => {
+        // Проверяем, что блюдо приготовлено этим поваром
+        const isMyItem =
+          item.chefId === user?.id || (item.chef && item.chef.id === user?.id);
+        if (!isMyItem) return false;
+
+        // Блюдо считается приготовленным если оно ready или served
+        // И оно было в заказе созданном сегодня
+        return ["ready", "served"].includes(item.status);
+      }).length;
+
+      console.log("Статистика приготовлено сегодня:", {
+        allOrdersCount: allOrders.length,
+        allItemsTodayCount: allItemsToday.length,
+        todayPrepared,
+        myItems: allItemsToday
+          .filter(
+            (item) =>
+              item.chefId === user?.id ||
+              (item.chef && item.chef.id === user?.id)
+          )
+          .map((item) => ({
+            id: item.id,
+            dish: item.dish?.name,
+            status: item.status,
+            chefId: item.chefId,
+            chef: item.chef,
+            orderCreatedAt: item.orderCreatedAt,
+            orderDate: item.orderDate?.toISOString(),
+          })),
+      });
+
+      setStats({
+        activeOrders,
+        preparingOrders,
+        readyOrders,
+        stoppedDishes,
+        myActiveOrders,
+        todayPrepared,
+      });
+    } catch (error) {
+      console.error("Ошибка загрузки статистики:", error);
+      setError("Не удалось загрузить статистику");
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  // WebSocket уведомления для повара
+  useEffect(() => {
+    console.log("Chef: Начало инициализации WebSocket");
+
+    const newOrderHandler = (data) => {
+      console.log("Chef: Получено WebSocket уведомление о новом заказе:", data);
+
+      toast.info(`🔥 Новый заказ #${data.order?.id || data.orderId}`, {
+        position: "bottom-right",
+        autoClose: 5000,
+      });
+
+      setNotifications((prev) => [data, ...prev.slice(0, 4)]);
+      loadStatistics();
+    };
+
+    try {
+      socketService.subscribeToChefNotifications(newOrderHandler);
+
+      if (user) {
+        socketService.userConnected({
+          role: "chef",
+          userId: user.id,
+        });
+      }
+    } catch (error) {
+      console.error("Chef: Ошибка инициализации WebSocket:", error);
+    }
+
+    return () => {
+      socketService.unsubscribeAll();
+    };
+  }, [user, loadStatistics]);
+
+  useEffect(() => {
+    loadStatistics();
+
+    const interval = setInterval(loadStatistics, 60000);
+    return () => clearInterval(interval);
+  }, [loadStatistics]);
+
   if (loading) {
     return (
       <div className="min-vh-100 bg-light">
@@ -165,6 +270,11 @@ const Chef = () => {
                     <h1 className="h3 mb-2">
                       <i className="bi bi-speedometer2 me-2"></i>
                       Панель повара
+                      {socketService.getConnectionStatus() && (
+                        <span className="badge bg-success ms-2">
+                          <i className="bi bi-wifi"></i> Online
+                        </span>
+                      )}
                     </h1>
                     <p className="text-muted mb-0">
                       Добро пожаловать, шеф {user?.firstName} {user?.lastName}
@@ -200,6 +310,37 @@ const Chef = () => {
           </div>
         )}
 
+        {/* Панель уведомлений WebSocket */}
+        {notifications.length > 0 && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="card border-info">
+                <div className="card-header bg-info text-white">
+                  <i className="bi bi-bell me-2"></i>
+                  Последние уведомления
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif, index) => (
+                      <div key={index} className="col-md-3 mb-2">
+                        <div className="alert alert-info py-2">
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              {notif.timestamp}
+                            </span>
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Быстрая статистика */}
         <div className="row mb-4">
           <div className="col-12">
@@ -230,9 +371,7 @@ const Chef = () => {
                       <h4 className="text-primary mb-1">
                         {stats.activeOrders}
                       </h4>
-                      <small className="text-muted">
-                        Всего активных заказов
-                      </small>
+                      <small className="text-muted">Активных заказов</small>
                     </div>
                   </div>
                   <div className="col-md-2 mb-3">

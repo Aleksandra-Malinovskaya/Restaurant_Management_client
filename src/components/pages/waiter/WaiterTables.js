@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../../NavBar";
 import { $authHost } from "../../../http";
 import { formatLocalDateTime } from "../../../utils/dateUtils";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const WaiterTables = () => {
   const navigate = useNavigate();
@@ -12,12 +14,13 @@ const WaiterTables = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [notifications, setNotifications] = useState([]);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Refs для отслеживания состояния без триггеров рендеринга
+  const notificationTimeoutRef = useRef(null);
+  const processedNotificationsRef = useRef(new Set());
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -45,10 +48,118 @@ const WaiterTables = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Функция для добавления уведомления с защитой от дубликатов
+  const addNotification = useCallback(
+    (data, type = "dish") => {
+      const notificationId =
+        type === "dish"
+          ? `dish-${data.orderId}-${data.dishName}`
+          : `order-${data.orderId}`;
+
+      // Проверяем, не обрабатывали ли мы уже это уведомление
+      if (processedNotificationsRef.current.has(notificationId)) {
+        console.log(
+          `🔄 WaiterTables: Пропускаем дублирующее уведомление ${notificationId}`
+        );
+        return;
+      }
+
+      // Добавляем в множество обработанных
+      processedNotificationsRef.current.add(notificationId);
+
+      // Очищаем через 10 секунд из множества обработанных
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+      notificationTimeoutRef.current = setTimeout(() => {
+        processedNotificationsRef.current.delete(notificationId);
+      }, 10000);
+
+      // Показываем toast
+      if (type === "dish") {
+        toast.info(`🍽️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 6000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+      } else {
+        toast.success(`🛎️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 8000,
+        });
+      }
+
+      // Добавляем в список уведомлений
+      setNotifications((prev) => {
+        const newNotification = {
+          ...data,
+          id: notificationId,
+          type,
+          timestamp: data.timestamp || new Date().toLocaleTimeString(),
+        };
+
+        // Ограничиваем список 6 уведомлениями
+        return [newNotification, ...prev.slice(0, 5)];
+      });
+
+      // Автоматически обновляем данные при уведомлении
+      loadData();
+    },
+    [loadData]
+  );
+
+  // WebSocket уведомления
+  useEffect(() => {
+    console.log("WaiterTables: Инициализация WebSocket");
+
+    const orderNotificationHandler = (data) => {
+      console.log("🛎️ WaiterTables: Уведомление о готовом заказе:", data);
+      addNotification(data, "order");
+    };
+
+    const dishNotificationHandler = (data) => {
+      console.log("🍽️ WaiterTables: Уведомление о готовом блюде:", data);
+      addNotification(data, "dish");
+    };
+
+    try {
+      // Подписываемся на уведомления
+      socketService.subscribeToWaiterOrderNotifications(
+        orderNotificationHandler
+      );
+      socketService.subscribeToWaiterDishNotifications(dishNotificationHandler);
+
+      return () => {
+        console.log("🧹 WaiterTables: Очистка WebSocket подписок");
+        // Отписываемся от всех уведомлений при размонтировании
+        socketService.unsubscribeAll();
+
+        // Очищаем таймеры
+        if (notificationTimeoutRef.current) {
+          clearTimeout(notificationTimeoutRef.current);
+        }
+      };
+    } catch (error) {
+      console.error("❌ WaiterTables: Ошибка инициализации WebSocket:", error);
+    }
+  }, [addNotification]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleBack = () => {
     navigate("/waiter");
+  };
+
+  const clearNotifications = () => {
+    setNotifications([]);
+    processedNotificationsRef.current.clear();
   };
 
   const handleTableClick = (table) => {
@@ -342,6 +453,11 @@ const WaiterTables = () => {
                         <h1 className="h3 mb-2">
                           <i className="bi bi-grid-3x3-gap me-2"></i>
                           Управление столиками
+                          {socketService.getConnectionStatus() && (
+                            <span className="badge bg-success ms-2">
+                              <i className="bi bi-wifi"></i> Online
+                            </span>
+                          )}
                         </h1>
                         <p className="text-muted mb-0">
                           Всего столиков: {tables.length} | Занято:{" "}
@@ -370,6 +486,71 @@ const WaiterTables = () => {
             </div>
           </div>
         </div>
+
+        {/* Уведомления с кухни */}
+        {notifications.length > 0 && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="card border-info">
+                <div className="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                  <span>
+                    <i className="bi bi-bell me-2"></i>
+                    Уведомления с кухни ({notifications.length})
+                  </span>
+                  <button
+                    className="btn btn-sm btn-light"
+                    onClick={clearNotifications}
+                  >
+                    <i className="bi bi-trash me-1"></i>
+                    Очистить
+                  </button>
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif) => (
+                      <div key={notif.id} className="col-md-6 mb-2">
+                        <div
+                          className={`alert ${
+                            notif.type === "order"
+                              ? "alert-success"
+                              : "alert-info"
+                          } py-2`}
+                        >
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              <i className="bi bi-clock me-1"></i>
+                              {notif.timestamp}
+                            </span>
+                            {notif.tableNumber && (
+                              <>
+                                <br />
+                                <span className="text-muted">
+                                  <i className="bi bi-table me-1"></i>
+                                  Стол: {notif.tableNumber}
+                                </span>
+                              </>
+                            )}
+                            {notif.dishName && (
+                              <>
+                                <br />
+                                <span className="text-muted">
+                                  <i className="bi bi-egg-fried me-1"></i>
+                                  Блюдо: {notif.dishName}
+                                </span>
+                              </>
+                            )}
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Фильтры */}
         <div className="row mb-4">
@@ -530,7 +711,6 @@ const WaiterTables = () => {
                                   {calculateOrderTotal(
                                     currentOrder.items || []
                                   )}{" "}
-                                  ₽
                                 </div>
                                 <div className="small">
                                   <strong>Блюд:</strong>{" "}

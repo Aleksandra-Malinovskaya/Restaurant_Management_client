@@ -3,6 +3,8 @@ import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { $authHost } from "../../../http";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const ChefOrders = () => {
   const { user } = useAuth();
@@ -10,7 +12,7 @@ const ChefOrders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [notifications, setNotifications] = useState([]);
 
   const loadOrders = useCallback(async () => {
     try {
@@ -29,7 +31,7 @@ const ChefOrders = () => {
       setOrders(filteredOrders);
     } catch (error) {
       console.error("Ошибка загрузки заказов:", error);
-      setError("Не удалось загрузить заказы");
+      setError("Не удалось загрузить заказов");
     } finally {
       setLoading(false);
     }
@@ -38,7 +40,7 @@ const ChefOrders = () => {
   const takeDish = async (orderItemId) => {
     try {
       await $authHost.put(`/orders/order-items/${orderItemId}/take`);
-      setSuccess("Блюдо взято в работу");
+      toast.success("Блюдо взято в работу");
       loadOrders();
     } catch (error) {
       console.error("Ошибка взятия блюда:", error);
@@ -49,13 +51,77 @@ const ChefOrders = () => {
   const completeDish = async (orderItemId) => {
     try {
       await $authHost.put(`/orders/order-items/${orderItemId}/complete`);
-      setSuccess("Блюдо готово");
+      toast.success("Блюдо готово");
       loadOrders();
     } catch (error) {
       console.error("Ошибка завершения блюда:", error);
       setError(error.response?.data?.message || "Не удалось завершить блюдо");
     }
   };
+
+  // WebSocket уведомления для страницы заказов
+  useEffect(() => {
+    console.log("ChefOrders: Начало инициализации WebSocket");
+
+    let socket;
+
+    try {
+      // Подключаемся к WebSocket
+      socket = socketService.connect();
+
+      // Сообщаем серверу о роли повара
+      if (user) {
+        console.log(
+          "ChefOrders: Отправка user_connected с ролью chef, userId:",
+          user.id
+        );
+        socketService.userConnected({
+          role: "chef",
+          userId: user.id,
+        });
+      }
+
+      // Подписываемся на уведомления
+      socketService.subscribeToChefNotifications((data) => {
+        console.log(
+          "ChefOrders: Получено WebSocket уведомление о новом заказе:",
+          data
+        );
+
+        // Toast уведомление в правом нижнем углу
+        toast.info(`🔥 Новый заказ #${data.order?.id || data.orderId}`, {
+          position: "bottom-right",
+          autoClose: 5000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          theme: "light",
+        });
+
+        // Добавляем в список уведомлений
+        setNotifications((prev) => [data, ...prev.slice(0, 4)]);
+
+        // Автоматически обновляем заказы при новом заказе
+        loadOrders();
+      });
+
+      // Дополнительная подписка для отладки
+      socket.on("new_order_notification", (data) => {
+        console.log(
+          "ChefOrders: Прямое уведомление new_order_notification:",
+          data
+        );
+      });
+    } catch (error) {
+      console.error("ChefOrders: Ошибка инициализации WebSocket:", error);
+    }
+
+    return () => {
+      console.log("ChefOrders: Очистка WebSocket подписок");
+      socketService.unsubscribeAll();
+    };
+  }, [user, loadOrders]);
 
   useEffect(() => {
     loadOrders();
@@ -152,6 +218,11 @@ const ChefOrders = () => {
                         <h1 className="h3 mb-2">
                           <i className="bi bi-list-check me-2"></i>
                           Кухня - Активные заказы
+                          {socketService.getConnectionStatus() && (
+                            <span className="badge bg-success ms-2">
+                              <i className="bi bi-wifi"></i> Online
+                            </span>
+                          )}
                         </h1>
                         <p className="text-muted mb-0">
                           Управление приготовлением блюд
@@ -182,12 +253,32 @@ const ChefOrders = () => {
           </div>
         )}
 
-        {success && (
+        {/* Панель уведомлений WebSocket */}
+        {notifications.length > 0 && (
           <div className="row mb-4">
             <div className="col-12">
-              <div className="alert alert-success">
-                <i className="bi bi-check-circle me-2"></i>
-                {success}
+              <div className="card border-info">
+                <div className="card-header bg-info text-white">
+                  <i className="bi bi-bell me-2"></i>
+                  Последние уведомления
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif, index) => (
+                      <div key={index} className="col-md-3 mb-2">
+                        <div className="alert alert-info py-2">
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              {notif.timestamp}
+                            </span>
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

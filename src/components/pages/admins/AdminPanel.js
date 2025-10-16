@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react"; // Добавляем useCallback
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -11,120 +11,205 @@ const AdminPanel = () => {
     activeOrders: 0,
     freeTables: 0,
     todayReservations: 0,
-    dishesOnTable: 0,
+    stoppedDishes: 0,
     activeEmployees: 0,
     todayRevenue: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // Улучшенная функция для безопасной работы с массивами
+  const safeFilter = (data, filterFn) => {
+    if (!Array.isArray(data)) {
+      console.warn("Данные не являются массивом:", data);
+      return [];
+    }
+    return data.filter(filterFn);
+  };
+
+  // Улучшенная функция для извлечения данных
+  const extractData = (responseData) => {
+    console.log("Полученные данные от API:", responseData);
+
+    if (Array.isArray(responseData)) {
+      return responseData;
+    } else if (responseData && Array.isArray(responseData.rows)) {
+      return responseData.rows;
+    } else if (responseData && Array.isArray(responseData.data)) {
+      return responseData.data;
+    } else if (responseData && typeof responseData === "object") {
+      // Если пришел объект, попробуем найти массив внутри
+      for (let key in responseData) {
+        if (Array.isArray(responseData[key])) {
+          return responseData[key];
+        }
+      }
+    }
+    return [];
+  };
+
+  // Форматирование валюты как в Admin
+  const formatCurrency = (amount) => {
+    const numAmount = parseFloat(amount) || 0;
+    return new Intl.NumberFormat("ru-RU", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(numAmount);
+  };
+
+  // Функция загрузки статистики как в Admin - оборачиваем в useCallback
   const loadStatistics = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
+      console.log("Начало загрузки статистики для AdminPanel...");
+
+      // Параллельно загружаем все данные с обработкой ошибок
       const [
         ordersResponse,
         tablesResponse,
+        usersResponse,
+        dishesResponse,
         reservationsResponse,
-        employeesResponse,
       ] = await Promise.all([
-        $authHost.get("/orders").catch(() => ({ data: [] })),
-        $authHost.get("/tables").catch(() => ({ data: [] })),
-        $authHost.get("/reservations").catch(() => ({ data: [] })),
-        $authHost.get("/employees/active").catch(() => ({ data: [] })),
+        $authHost.get("/orders").catch((err) => {
+          console.error(
+            "Ошибка загрузки заказов:",
+            err.response?.data || err.message
+          );
+          return { data: [] };
+        }),
+        $authHost.get("/tables").catch((err) => {
+          console.error(
+            "Ошибка загрузки столов:",
+            err.response?.data || err.message
+          );
+          return { data: [] };
+        }),
+        $authHost.get("/users").catch((err) => {
+          console.error(
+            "Ошибка загрузки пользователей:",
+            err.response?.data || err.message
+          );
+          return { data: [] };
+        }),
+        $authHost.get("/dishes").catch((err) => {
+          console.error(
+            "Ошибка загрузки блюд:",
+            err.response?.data || err.message
+          );
+          return { data: { rows: [] } };
+        }),
+        $authHost.get("/reservations").catch((err) => {
+          console.error(
+            "Ошибка загрузки бронирований:",
+            err.response?.data || err.message
+          );
+          return { data: [] };
+        }),
       ]);
 
-      const orders = Array.isArray(ordersResponse.data)
-        ? ordersResponse.data
-        : [];
-      const tables = Array.isArray(tablesResponse.data)
-        ? tablesResponse.data
-        : [];
-      const reservations = Array.isArray(reservationsResponse.data)
-        ? reservationsResponse.data
-        : [];
-      const employees = Array.isArray(employeesResponse.data)
-        ? employeesResponse.data
-        : [];
+      // Извлекаем данные с улучшенной обработкой
+      const ordersData = extractData(ordersResponse.data);
+      const tablesData = extractData(tablesResponse.data);
+      const usersData = extractData(usersResponse.data);
+      const dishesData = extractData(dishesResponse.data);
+      const reservationsData = extractData(reservationsResponse.data);
 
-      // Активные заказы
-      const activeOrders = orders.filter((order) =>
-        ["open", "in_progress", "ready"].includes(order.status)
+      console.log("Извлеченные данные для AdminPanel:", {
+        orders: ordersData.length,
+        tables: tablesData.length,
+        users: usersData.length,
+        dishes: dishesData.length,
+        reservations: reservationsData.length,
+      });
+
+      // Анализируем данные и считаем статистику ТАК ЖЕ КАК В ADMIN
+
+      // Активные заказы (не закрытые)
+      const activeOrders = safeFilter(
+        ordersData,
+        (order) => order.status !== "closed" && order.status !== "cancelled"
       ).length;
 
-      // Свободные столики
-      const now = new Date();
-      const occupiedTables = tables.filter((table) => {
-        const tableOrders = orders.filter(
-          (order) =>
-            order.tableId === table.id &&
-            ["open", "in_progress", "ready"].includes(order.status)
-        );
+      // Свободные столы (isActive = true)
+      const freeTables = safeFilter(
+        tablesData,
+        (table) => table.isActive === true
+      ).length;
 
-        const currentReservation = reservations.find(
-          (reservation) =>
-            reservation.tableId === table.id &&
-            new Date(reservation.reservedFrom) <= now &&
-            new Date(reservation.reservedTo) >= now &&
-            ["confirmed", "seated"].includes(reservation.status)
-        );
+      // Активные сотрудники (все активные пользователи)
+      const activeEmployees = safeFilter(
+        usersData,
+        (user) => user.isActive === true
+      ).length;
 
-        return (
-          tableOrders.length > 0 ||
-          (currentReservation && currentReservation.status === "seated")
-        );
-      }).length;
-
-      const freeTables = tables.length - occupiedTables;
-
-      // Бронирования на сегодня
-      const today = new Date().toISOString().split("T")[0];
-      const todayReservations = reservations.filter((reservation) => {
-        const reservationDate = new Date(reservation.reservedFrom)
-          .toISOString()
-          .split("T")[0];
-        return (
-          reservationDate === today &&
-          ["confirmed", "seated"].includes(reservation.status)
-        );
-      }).length;
-
-      // Блюда на столе (активные заказы с блюдами)
-      const dishesOnTable = orders
-        .filter((order) =>
-          ["open", "in_progress", "ready"].includes(order.status)
-        )
-        .reduce((sum, order) => sum + (order.itemsCount || 0), 0);
-
-      // Активные сотрудники
-      const activeEmployees = employees.length;
+      // Блюда на стопе
+      const stoppedDishes = safeFilter(
+        dishesData,
+        (dish) => dish.isStopped === true
+      ).length;
 
       // Выручка за сегодня
-      const todayRevenue = orders
-        .filter((order) => {
-          const orderDate = order.createdAt
-            ? order.createdAt.split("T")[0]
-            : "";
-          return orderDate === today && order.status === "closed";
-        })
-        .reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+      const today = new Date().toISOString().split("T")[0];
+      const todayRevenue = safeFilter(ordersData, (order) => {
+        if (!order.createdAt && !order.createdDate) return false;
 
-      setStats({
+        // Пробуем разные возможные поля с датой
+        const orderDateStr = order.createdAt || order.createdDate || order.date;
+        if (!orderDateStr) return false;
+
+        const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
+        const isToday = orderDate === today;
+        const isClosed = order.status === "closed";
+
+        return isToday && isClosed;
+      }).reduce((sum, order) => {
+        const amount = parseFloat(
+          order.totalAmount || order.amount || order.price || 0
+        );
+        return sum + amount;
+      }, 0);
+
+      // Бронирования на сегодня
+      const todayReservations = safeFilter(reservationsData, (reservation) => {
+        if (!reservation.reservedFrom && !reservation.date) return false;
+
+        const reservationDateStr = reservation.reservedFrom || reservation.date;
+        const reservationDate = new Date(reservationDateStr)
+          .toISOString()
+          .split("T")[0];
+
+        // Проверяем разные возможные статусы
+        const isConfirmed =
+          reservation.status === "confirmed" ||
+          reservation.status === "active" ||
+          reservation.isActive === true;
+
+        return reservationDate === today && isConfirmed;
+      }).length;
+
+      const newStats = {
         activeOrders,
         freeTables,
         todayReservations,
-        dishesOnTable,
+        stoppedDishes,
         activeEmployees,
         todayRevenue,
-      });
+      };
+
+      console.log("Рассчитанная статистика для AdminPanel:", newStats);
+
+      setStats(newStats);
     } catch (error) {
-      console.error("Ошибка загрузки статистики:", error);
-      setError("Не удалось загрузить статистику");
+      console.error("Общая ошибка загрузки статистики:", error);
+      const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, []); // useCallback с пустым массивом зависимостей
 
   useEffect(() => {
     loadStatistics();
@@ -132,9 +217,11 @@ const AdminPanel = () => {
     // Обновление статистики каждые 30 секунд
     const interval = setInterval(loadStatistics, 30000);
     return () => clearInterval(interval);
-  }, [loadStatistics]);
+  }, [loadStatistics]); // Теперь loadStatistics в зависимостях
 
-  // ИСПРАВЛЕННЫЕ ПУТИ - все ведут на /admin-panel/*
+  // ... остальной код без изменений
+
+  // Карточки функций для AdminPanel
   const adminCards = [
     {
       title: "🍽️ Блюда",
@@ -153,7 +240,7 @@ const AdminPanel = () => {
     {
       title: "📊 Статистика",
       description: "Подробная статистика и отчеты",
-      path: "/admin-panel/stats", // исправлено с statistics на stats
+      path: "/admin-panel/stats",
       color: "info",
       icon: "bi-graph-up",
     },
@@ -167,7 +254,7 @@ const AdminPanel = () => {
     {
       title: "⚙️ Настройки",
       description: "Настройки системы",
-      path: "/admin-panel/settings", // исправлено с /admin/settings на /admin-panel/settings
+      path: "/admin-panel/settings",
       color: "dark",
       icon: "bi-gear",
     },
@@ -244,11 +331,11 @@ const AdminPanel = () => {
           </div>
         )}
 
-        {/* Быстрая статистика */}
+        {/* Быстрая статистика - ТАК ЖЕ КАК В ADMIN */}
         <div className="row mb-4">
           <div className="col-12">
-            <div className="card border-primary">
-              <div className="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <div className="card border-info">
+              <div className="card-header bg-info text-white d-flex justify-content-between align-items-center">
                 <span>
                   <i className="bi bi-info-circle me-2"></i>
                   Быстрая статистика
@@ -285,7 +372,7 @@ const AdminPanel = () => {
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-info mb-1">
+                      <h4 className="text-warning mb-1">
                         {stats.todayReservations}
                       </h4>
                       <small className="text-muted">Бронирований сегодня</small>
@@ -293,15 +380,15 @@ const AdminPanel = () => {
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-warning mb-1">
-                        {stats.dishesOnTable}
+                      <h4 className="text-danger mb-1">
+                        {stats.stoppedDishes}
                       </h4>
-                      <small className="text-muted">Блюд на столе</small>
+                      <small className="text-muted">Блюд на стопе</small>
                     </div>
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-secondary mb-1">
+                      <h4 className="text-info mb-1">
                         {stats.activeEmployees}
                       </h4>
                       <small className="text-muted">Активных сотрудников</small>
@@ -309,7 +396,9 @@ const AdminPanel = () => {
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-dark mb-1">{stats.todayRevenue} ₽</h4>
+                      <h4 className="text-dark mb-1">
+                        {formatCurrency(stats.todayRevenue)}
+                      </h4>
                       <small className="text-muted">Выручка сегодня</small>
                     </div>
                   </div>

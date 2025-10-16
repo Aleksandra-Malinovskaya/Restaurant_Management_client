@@ -1281,7 +1281,6 @@ const TablesManagement = () => {
                                       {calculateOrderTotal(
                                         activeOrder.items || []
                                       )}{" "}
-                                      ₽
                                     </div>
                                     <div className="small">
                                       <i className="bi bi-clock me-1"></i>
@@ -1534,7 +1533,7 @@ const TablesManagement = () => {
                                   </span>
                                 </td>
                                 <td>
-                                  <strong>{totalAmount} ₽</strong>
+                                  <strong>{totalAmount} </strong>
                                 </td>
                                 <td>
                                   <small className="text-muted">

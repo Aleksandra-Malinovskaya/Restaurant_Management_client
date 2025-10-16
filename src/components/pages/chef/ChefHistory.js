@@ -3,7 +3,9 @@ import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { orderAPI } from "../../../services/orderAPI";
-import { orderItemAPI } from "../../../services/orderItemAPI";
+import { $authHost } from "../../../http";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const ChefHistory = () => {
   const { user } = useAuth();
@@ -12,9 +14,9 @@ const ChefHistory = () => {
   const [completedDishes, setCompletedDishes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [timeFilter, setTimeFilter] = useState("today");
   const [activeTab, setActiveTab] = useState("orders");
+  const [notifications, setNotifications] = useState([]);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -37,25 +39,44 @@ const ChefHistory = () => {
           startDate.setHours(0, 0, 0, 0);
       }
 
-      const [ordersResponse, orderItemsResponse] = await Promise.all([
-        orderAPI.getAll(),
-        orderItemAPI.getKitchenItems(),
-      ]);
+      // Получаем ВСЕ заказы и анализируем их items
+      const allOrdersResponse = await orderAPI.getAll();
 
-      // Фильтруем завершенные заказы
-      const filteredOrders = ordersResponse.filter((order) => {
-        const orderDate = new Date(order.updatedAt || order.createdAt);
-        return order.status === "closed" && orderDate >= startDate;
+      // Собираем ВСЕ блюда из ВСЕХ заказов
+      const allItemsFromOrders = [];
+      allOrdersResponse.forEach((order) => {
+        if (order.items && Array.isArray(order.items)) {
+          const orderDate = new Date(order.createdAt);
+          order.items.forEach((item) => {
+            allItemsFromOrders.push({
+              ...item,
+              orderId: order.id,
+              orderStatus: order.status,
+              orderCreatedAt: order.createdAt,
+              orderDate: orderDate,
+            });
+          });
+        }
       });
 
-      // Фильтруем завершенные блюда повара
-      const filteredDishes = orderItemsResponse.filter((item) => {
+      // Фильтруем завершенные заказы
+      const filteredOrders = allOrdersResponse.filter((order) => {
+        const orderDate = new Date(order.updatedAt || order.createdAt);
+        const isClosed = order.status === "closed";
+        const isInDateRange = orderDate >= startDate;
+
+        return isClosed && isInDateRange;
+      });
+
+      // Фильтруем приготовленные блюда из ВСЕХ блюд
+      const filteredDishes = allItemsFromOrders.filter((item) => {
         const itemDate = new Date(item.updatedAt || item.createdAt);
-        return (
-          item.status === "completed" &&
-          item.chefId === user?.id &&
-          itemDate >= startDate
-        );
+        const isMyItem =
+          item.chefId === user?.id || (item.chef && item.chef.id === user?.id);
+        const isPrepared = ["ready", "served"].includes(item.status);
+        const isInDateRange = itemDate >= startDate;
+
+        return isMyItem && isPrepared && isInDateRange;
       });
 
       setCompletedOrders(filteredOrders);
@@ -68,12 +89,53 @@ const ChefHistory = () => {
     }
   }, [timeFilter, user]);
 
+  // WebSocket уведомления для страницы истории
   useEffect(() => {
+    console.log("ChefHistory: Начало инициализации WebSocket");
+
+    const newOrderHandler = (data) => {
+      console.log(
+        "ChefHistory: Получено WebSocket уведомление о новом заказе:",
+        data
+      );
+
+      toast.info(`🔥 Новый заказ #${data.order?.id || data.orderId}`, {
+        position: "bottom-right",
+        autoClose: 5000,
+      });
+
+      setNotifications((prev) => [data, ...prev.slice(0, 4)]);
+    };
+
+    try {
+      socketService.subscribeToChefNotifications(newOrderHandler);
+
+      if (user) {
+        socketService.userConnected({
+          role: "chef",
+          userId: user.id,
+        });
+      }
+    } catch (error) {
+      console.error("ChefHistory: Ошибка инициализации WebSocket:", error);
+    }
+
+    return () => {
+      socketService.unsubscribeAll();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    // Используем основную функцию
     loadHistory();
   }, [loadHistory]);
 
   const handleBack = () => {
     navigate("/chef");
+  };
+
+  const handleRefresh = () => {
+    loadHistory();
   };
 
   const getTimeFilterText = () => {
@@ -97,7 +159,7 @@ const ChefHistory = () => {
   };
 
   const calculateDishesCount = () => {
-    return completedDishes.reduce((sum, item) => sum + item.quantity, 0);
+    return completedDishes.reduce((sum, item) => sum + (item.quantity || 1), 0);
   };
 
   const calculateAveragePreparationTime = () => {
@@ -167,6 +229,11 @@ const ChefHistory = () => {
                         <h1 className="h3 mb-2">
                           <i className="bi bi-clock-history me-2"></i>
                           История работы
+                          {socketService.getConnectionStatus() && (
+                            <span className="badge bg-success ms-2">
+                              <i className="bi bi-wifi"></i> Online
+                            </span>
+                          )}
                         </h1>
                         <p className="text-muted mb-0">
                           Статистика выполненных заказов и блюд
@@ -175,7 +242,7 @@ const ChefHistory = () => {
                     </div>
                   </div>
                   <div className="col-md-6 text-end">
-                    <button className="btn btn-primary" onClick={loadHistory}>
+                    <button className="btn btn-primary" onClick={handleRefresh}>
                       <i className="bi bi-arrow-clockwise me-2"></i>
                       Обновить
                     </button>
@@ -197,12 +264,32 @@ const ChefHistory = () => {
           </div>
         )}
 
-        {success && (
+        {/* Панель уведомлений WebSocket */}
+        {notifications.length > 0 && (
           <div className="row mb-4">
             <div className="col-12">
-              <div className="alert alert-success">
-                <i className="bi bi-check-circle me-2"></i>
-                {success}
+              <div className="card border-info">
+                <div className="card-header bg-info text-white">
+                  <i className="bi bi-bell me-2"></i>
+                  Последние уведомления
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif, index) => (
+                      <div key={index} className="col-md-3 mb-2">
+                        <div className="alert alert-info py-2">
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              {notif.timestamp}
+                            </span>
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -367,14 +454,14 @@ const ChefHistory = () => {
                             <td>
                               <strong>#{order.id}</strong>
                             </td>
-                            <td>{order.table?.number || "Не указан"}</td>
+                            <td>{order.table?.name || "Не указан"}</td>
                             <td>
                               <span className="badge bg-primary">
                                 {order.items?.length || 0}
                               </span>
                             </td>
                             <td className="text-success fw-bold">
-                              {formatCurrency(order.totalAmount || 0)} ₽
+                              {formatCurrency(order.totalAmount || 0)}
                             </td>
                             <td>
                               <small className="text-muted">
@@ -413,6 +500,7 @@ const ChefHistory = () => {
                         <tr>
                           <th>Блюдо</th>
                           <th>Количество</th>
+                          <th>Статус</th>
                           <th>Заказ</th>
                           <th>Время начала</th>
                           <th>Время завершения</th>
@@ -430,28 +518,51 @@ const ChefHistory = () => {
                           return (
                             <tr key={item.id}>
                               <td>
-                                <strong>{item.dish?.name}</strong>
-                                <br />
-                                <small className="text-muted">
-                                  {item.dish?.category?.name}
-                                </small>
+                                <strong>
+                                  {item.dish?.name || "Неизвестное блюдо"}
+                                </strong>
+                                {item.dish?.category?.name && (
+                                  <>
+                                    <br />
+                                    <small className="text-muted">
+                                      {item.dish.category.name}
+                                    </small>
+                                  </>
+                                )}
                               </td>
                               <td>
                                 <span className="badge bg-success">
-                                  {item.quantity}
+                                  {item.quantity || 1}
                                 </span>
                               </td>
                               <td>
-                                <strong>#{item.orderId}</strong>
+                                <span
+                                  className={`badge ${
+                                    item.status === "ready"
+                                      ? "bg-success"
+                                      : "bg-info"
+                                  }`}
+                                >
+                                  {item.status === "ready"
+                                    ? "Готово"
+                                    : "Подано"}
+                                </span>
+                              </td>
+                              <td>
+                                <strong>#{item.orderId || "N/A"}</strong>
                               </td>
                               <td>
                                 <small className="text-muted">
                                   {startTime.toLocaleTimeString("ru-RU")}
+                                  <br />
+                                  {startTime.toLocaleDateString("ru-RU")}
                                 </small>
                               </td>
                               <td>
                                 <small className="text-muted">
                                   {endTime.toLocaleTimeString("ru-RU")}
+                                  <br />
+                                  {endTime.toLocaleDateString("ru-RU")}
                                 </small>
                               </td>
                               <td>
@@ -482,6 +593,11 @@ const ChefHistory = () => {
                         <p className="text-muted">
                           За выбранный период вы не приготовили ни одного блюда
                         </p>
+                        <div className="mt-3">
+                          <small className="text-muted">
+                            Проверьте консоль браузера для отладки данных
+                          </small>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -517,7 +633,7 @@ const ChefHistory = () => {
                         };
                       }
                       dishStats[dishName].count++;
-                      dishStats[dishName].totalQuantity += item.quantity;
+                      dishStats[dishName].totalQuantity += item.quantity || 1;
                       const prepTime = Math.round(
                         (new Date(item.updatedAt) - new Date(item.createdAt)) /
                           (1000 * 60)

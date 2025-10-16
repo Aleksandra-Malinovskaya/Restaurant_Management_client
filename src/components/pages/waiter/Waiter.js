@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { $authHost } from "../../../http";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const Waiter = () => {
   const { user } = useAuth();
@@ -17,6 +19,11 @@ const Waiter = () => {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notifications, setNotifications] = useState([]);
+
+  // Refs для отслеживания состояния без триггеров рендеринга
+  const notificationTimeoutRef = useRef(null);
+  const processedNotificationsRef = useRef(new Set());
 
   const loadStatistics = useCallback(async () => {
     try {
@@ -112,12 +119,132 @@ const Waiter = () => {
       setLoading(false);
     }
   }, []);
+  const formatCurrency = (amount) => {
+    const numAmount = parseFloat(amount) || 0;
+    return new Intl.NumberFormat("ru-RU", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(numAmount);
+  };
+  // Функция для добавления уведомления с защитой от дубликатов
+  const addNotification = useCallback(
+    (data, type = "dish") => {
+      const notificationId =
+        type === "dish"
+          ? `dish-${data.orderId}-${data.dishName}`
+          : `order-${data.orderId}`;
+
+      // Проверяем, не обрабатывали ли мы уже это уведомление
+      if (processedNotificationsRef.current.has(notificationId)) {
+        console.log(
+          `🔄 Waiter: Пропускаем дублирующее уведомление ${notificationId}`
+        );
+        return;
+      }
+
+      // Добавляем в множество обработанных
+      processedNotificationsRef.current.add(notificationId);
+
+      // Очищаем через 10 секунд из множества обработанных
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+      notificationTimeoutRef.current = setTimeout(() => {
+        processedNotificationsRef.current.delete(notificationId);
+      }, 10000);
+
+      // Показываем toast
+      if (type === "dish") {
+        toast.info(`🍽️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 6000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+      } else {
+        toast.success(`🛎️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 8000,
+        });
+      }
+
+      // Добавляем в список уведомлений
+      setNotifications((prev) => {
+        const newNotification = {
+          ...data,
+          id: notificationId,
+          type,
+          timestamp: data.timestamp || new Date().toLocaleTimeString(),
+        };
+
+        // Ограничиваем список 6 уведомлениями
+        return [newNotification, ...prev.slice(0, 5)];
+      });
+
+      // Обновляем статистику
+      loadStatistics();
+    },
+    [loadStatistics]
+  );
+
+  // WebSocket уведомления
+  useEffect(() => {
+    console.log("Waiter: Начало инициализации WebSocket");
+
+    const dishNotificationHandler = (data) => {
+      console.log("🍽️ Waiter: Получено уведомление о готовом блюде:", data);
+      addNotification(data, "dish");
+    };
+
+    const orderNotificationHandler = (data) => {
+      console.log("🛎️ Waiter: Получено уведомление о готовом заказе:", data);
+      addNotification(data, "order");
+    };
+
+    try {
+      // Подключаемся к WebSocket
+      socketService.connect();
+
+      // Сообщаем серверу о роли официанта
+      if (user) {
+        console.log(
+          "📤 Waiter: Отправка user_connected с ролью waiter, userId:",
+          user.id
+        );
+        socketService.userConnected({
+          role: "waiter",
+          userId: user.id,
+        });
+      }
+
+      // Подписываемся на уведомления
+      socketService.subscribeToWaiterDishNotifications(dishNotificationHandler);
+      socketService.subscribeToWaiterOrderNotifications(
+        orderNotificationHandler
+      );
+    } catch (error) {
+      console.error("❌ Waiter: Ошибка инициализации WebSocket:", error);
+      toast.error("Ошибка подключения к уведомлениям с кухни");
+    }
+
+    return () => {
+      console.log("🧹 Waiter: Очистка WebSocket подписок");
+      // Отписываемся от всех уведомлений при размонтировании
+      socketService.unsubscribeAll();
+
+      // Очищаем таймеры
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+    };
+  }, [user, addNotification]);
 
   useEffect(() => {
     loadStatistics();
 
-    // Обновление статистики каждые 30 секунд
-    const interval = setInterval(loadStatistics, 30000);
+    const interval = setInterval(loadStatistics, 60000);
     return () => clearInterval(interval);
   }, [loadStatistics]);
 
@@ -160,6 +287,11 @@ const Waiter = () => {
     loadStatistics();
   };
 
+  const clearNotifications = () => {
+    setNotifications([]);
+    processedNotificationsRef.current.clear();
+  };
+
   if (loading) {
     return (
       <div className="min-vh-100 bg-light">
@@ -188,13 +320,15 @@ const Waiter = () => {
                     <h1 className="h3 mb-2">
                       <i className="bi bi-speedometer2 me-2"></i>
                       Панель официанта
+                      {socketService.getConnectionStatus() && (
+                        <span className="badge bg-success ms-2">
+                          <i className="bi bi-wifi"></i> Online
+                        </span>
+                      )}
                     </h1>
                     <p className="text-muted mb-0">
                       Добро пожаловать, {user?.firstName} {user?.lastName}
                     </p>
-                  </div>
-                  <div className="col-md-4 text-end">
-                    <span className="badge bg-success fs-6">Официант</span>
                   </div>
                 </div>
               </div>
@@ -218,6 +352,56 @@ const Waiter = () => {
                   <i className="bi bi-arrow-clockwise me-1"></i>
                   Повторить
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Панель уведомлений WebSocket */}
+        {notifications.length > 0 && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="card border-success">
+                <div className="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                  <span>
+                    <i className="bi bi-bell me-2"></i>
+                    Уведомления с кухни ({notifications.length})
+                  </span>
+                  <button
+                    className="btn btn-sm btn-light"
+                    onClick={clearNotifications}
+                  >
+                    <i className="bi bi-trash me-1"></i>
+                    Очистить
+                  </button>
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif) => (
+                      <div key={notif.id} className="col-md-4 mb-2">
+                        <div className="alert alert-success py-2">
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              <i className="bi bi-clock me-1"></i>
+                              {notif.timestamp}
+                            </span>
+                            {notif.tableNumber && (
+                              <>
+                                <br />
+                                <span className="text-muted">
+                                  <i className="bi bi-table me-1"></i>
+                                  Стол: {notif.tableNumber}
+                                </span>
+                              </>
+                            )}
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -286,7 +470,9 @@ const Waiter = () => {
                   </div>
                   <div className="col-md-2 mb-3">
                     <div className="border rounded p-3 bg-light">
-                      <h4 className="text-dark mb-1">{stats.todayRevenue}</h4>
+                      <h4 className="text-dark mb-1">
+                        {formatCurrency(stats.todayRevenue)}
+                      </h4>
                       <small className="text-muted">Выручка сегодня</small>
                     </div>
                   </div>

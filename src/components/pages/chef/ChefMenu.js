@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useCallback } from "react";
 import Navbar from "../../NavBar";
+import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { dishAPI } from "../../../services/dishAPI";
 import { $authHost } from "../../../http";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const ChefMenu = () => {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [dishes, setDishes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [pagination, setPagination] = useState({
     currentPage: 1,
@@ -18,6 +21,7 @@ const ChefMenu = () => {
     totalCount: 0,
     limit: 9,
   });
+  const [notifications, setNotifications] = useState([]);
 
   const loadMenu = useCallback(
     async (page = 1) => {
@@ -59,10 +63,9 @@ const ChefMenu = () => {
 
   const toggleDishStop = async (dish) => {
     try {
-      // Используем метод toggleStop из API
       await dishAPI.toggleStop(dish.id);
 
-      setSuccess(
+      toast.success(
         `Блюдо ${dish.isStopped ? "снято со стопа" : "поставлено на стоп"}`
       );
       loadMenu(pagination.currentPage);
@@ -74,6 +77,67 @@ const ChefMenu = () => {
       );
     }
   };
+
+  // WebSocket уведомления для страницы меню
+  useEffect(() => {
+    console.log("ChefMenu: Начало инициализации WebSocket");
+
+    let socket;
+
+    try {
+      // Подключаемся к WebSocket
+      socket = socketService.connect();
+
+      // Сообщаем серверу о роли повара
+      if (user) {
+        console.log(
+          "ChefMenu: Отправка user_connected с ролью chef, userId:",
+          user.id
+        );
+        socketService.userConnected({
+          role: "chef",
+          userId: user.id,
+        });
+      }
+
+      // Подписываемся на уведомления
+      socketService.subscribeToChefNotifications((data) => {
+        console.log(
+          "ChefMenu: Получено WebSocket уведомление о новом заказе:",
+          data
+        );
+
+        // Toast уведомление в правом нижнем углу
+        toast.info(`🔥 Новый заказ #${data.order?.id || data.orderId}`, {
+          position: "bottom-right",
+          autoClose: 5000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          theme: "light",
+        });
+
+        // Добавляем в список уведомлений
+        setNotifications((prev) => [data, ...prev.slice(0, 4)]);
+      });
+
+      // Дополнительная подписка для отладки
+      socket.on("new_order_notification", (data) => {
+        console.log(
+          "ChefMenu: Прямое уведомление new_order_notification:",
+          data
+        );
+      });
+    } catch (error) {
+      console.error("ChefMenu: Ошибка инициализации WebSocket:", error);
+    }
+
+    return () => {
+      console.log("ChefMenu: Очистка WebSocket подписок");
+      socketService.unsubscribeAll();
+    };
+  }, [user]);
 
   useEffect(() => {
     loadMenu(1);
@@ -139,6 +203,11 @@ const ChefMenu = () => {
                         <h1 className="h3 mb-2">
                           <i className="bi bi-book me-2"></i>
                           Меню ресторана
+                          {socketService.getConnectionStatus() && (
+                            <span className="badge bg-success ms-2">
+                              <i className="bi bi-wifi"></i> Online
+                            </span>
+                          )}
                         </h1>
                         <p className="text-muted mb-0">
                           Просмотр и управление доступностью блюд
@@ -172,12 +241,32 @@ const ChefMenu = () => {
           </div>
         )}
 
-        {success && (
+        {/* Панель уведомлений WebSocket */}
+        {notifications.length > 0 && (
           <div className="row mb-4">
             <div className="col-12">
-              <div className="alert alert-success">
-                <i className="bi bi-check-circle me-2"></i>
-                {success}
+              <div className="card border-info">
+                <div className="card-header bg-info text-white">
+                  <i className="bi bi-bell me-2"></i>
+                  Последние уведомления
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif, index) => (
+                      <div key={index} className="col-md-3 mb-2">
+                        <div className="alert alert-info py-2">
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              {notif.timestamp}
+                            </span>
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -18,7 +18,7 @@ const Admin = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Вспомогательная функция для безопасной работы с массивами
+  // Улучшенная функция для безопасной работы с массивами
   const safeFilter = (data, filterFn) => {
     if (!Array.isArray(data)) {
       console.warn("Данные не являются массивом:", data);
@@ -27,16 +27,33 @@ const Admin = () => {
     return data.filter(filterFn);
   };
 
-  // Функция для извлечения данных из ответа API (поддержка формата {rows: [], count: X})
+  // Улучшенная функция для извлечения данных
   const extractData = (responseData) => {
+    console.log("Полученные данные от API:", responseData);
+
     if (Array.isArray(responseData)) {
       return responseData;
     } else if (responseData && Array.isArray(responseData.rows)) {
       return responseData.rows;
     } else if (responseData && Array.isArray(responseData.data)) {
       return responseData.data;
+    } else if (responseData && typeof responseData === "object") {
+      // Если пришел объект, попробуем найти массив внутри
+      for (let key in responseData) {
+        if (Array.isArray(responseData[key])) {
+          return responseData[key];
+        }
+      }
     }
     return [];
+  };
+
+  const formatCurrency = (amount) => {
+    const numAmount = parseFloat(amount) || 0;
+    return new Intl.NumberFormat("ru-RU", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(numAmount);
   };
 
   const loadStatistics = async () => {
@@ -44,7 +61,9 @@ const Admin = () => {
       setLoading(true);
       setError("");
 
-      // Параллельно загружаем все данные
+      console.log("Начало загрузки статистики...");
+
+      // Параллельно загружаем все данные с обработкой ошибок
       const [
         ordersResponse,
         tablesResponse,
@@ -53,68 +72,120 @@ const Admin = () => {
         reservationsResponse,
       ] = await Promise.all([
         $authHost.get("/orders").catch((err) => {
+          console.error(
+            "Ошибка загрузки заказов:",
+            err.response?.data || err.message
+          );
           return { data: [] };
         }),
         $authHost.get("/tables").catch((err) => {
+          console.error(
+            "Ошибка загрузки столов:",
+            err.response?.data || err.message
+          );
           return { data: [] };
         }),
         $authHost.get("/users").catch((err) => {
+          console.error(
+            "Ошибка загрузки пользователей:",
+            err.response?.data || err.message
+          );
           return { data: [] };
         }),
         $authHost.get("/dishes").catch((err) => {
+          console.error(
+            "Ошибка загрузки блюд:",
+            err.response?.data || err.message
+          );
           return { data: { rows: [] } };
         }),
         $authHost.get("/reservations").catch((err) => {
+          console.error(
+            "Ошибка загрузки бронирований:",
+            err.response?.data || err.message
+          );
           return { data: [] };
         }),
       ]);
 
-      // Извлекаем данные с учетом структуры ответа
+      // Извлекаем данные с улучшенной обработкой
       const ordersData = extractData(ordersResponse.data);
       const tablesData = extractData(tablesResponse.data);
       const usersData = extractData(usersResponse.data);
       const dishesData = extractData(dishesResponse.data);
       const reservationsData = extractData(reservationsResponse.data);
 
-      console.log("Dishes data for statistics:", dishesData); // Для отладки
+      console.log("Извлеченные данные:", {
+        orders: ordersData,
+        tables: tablesData,
+        users: usersData,
+        dishes: dishesData,
+        reservations: reservationsData,
+      });
 
-      // Анализируем данные и считаем статистику с безопасными методами
+      // Анализируем данные и считаем статистику
+
+      // Активные заказы (не закрытые)
       const activeOrders = safeFilter(
         ordersData,
-        (order) => order.status === "open" || order.status === "in_progress"
+        (order) => order.status !== "closed" && order.status !== "cancelled"
       ).length;
 
+      // Свободные столы (isActive = true)
       const freeTables = safeFilter(
         tablesData,
         (table) => table.isActive === true
       ).length;
 
+      // Активные сотрудники (не супер-админы)
       const activeEmployees = safeFilter(
         usersData,
         (user) => user.isActive === true
       ).length;
 
-      // Исправляем подсчет блюд на стопе - только по полю isStopped
+      // Блюда на стопе
       const stoppedDishes = safeFilter(
         dishesData,
         (dish) => dish.isStopped === true
       ).length;
 
-      console.log("Stopped dishes count:", stoppedDishes); // Для отладки
-
       // Выручка за сегодня
       const today = new Date().toISOString().split("T")[0];
       const todayRevenue = safeFilter(ordersData, (order) => {
-        const orderDate = order.createdAt ? order.createdAt.split("T")[0] : "";
-        return orderDate === today && order.status === "closed";
-      }).reduce((sum, order) => sum + parseFloat(order.totalAmount || 0), 0);
+        if (!order.createdAt && !order.createdDate) return false;
+
+        // Пробуем разные возможные поля с датой
+        const orderDateStr = order.createdAt || order.createdDate || order.date;
+        if (!orderDateStr) return false;
+
+        const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
+        const isToday = orderDate === today;
+        const isClosed = order.status === "closed";
+
+        return isToday && isClosed;
+      }).reduce((sum, order) => {
+        const amount = parseFloat(
+          order.totalAmount || order.amount || order.price || 0
+        );
+        return sum + amount;
+      }, 0);
 
       // Бронирования на сегодня
       const todayReservations = safeFilter(reservationsData, (reservation) => {
-        const reservationDate = reservation.reservedFrom
-          ? reservation.reservedFrom.split("T")[0]
-          : "";
-        return reservationDate === today && reservation.status === "confirmed";
+        if (!reservation.reservedFrom && !reservation.date) return false;
+
+        const reservationDateStr = reservation.reservedFrom || reservation.date;
+        const reservationDate = new Date(reservationDateStr)
+          .toISOString()
+          .split("T")[0];
+
+        // Проверяем разные возможные статусы
+        const isConfirmed =
+          reservation.status === "confirmed" ||
+          reservation.status === "active" ||
+          reservation.isActive === true;
+
+        return reservationDate === today && isConfirmed;
       }).length;
 
       const newStats = {
@@ -126,9 +197,11 @@ const Admin = () => {
         todayRevenue,
       };
 
+      console.log("Рассчитанная статистика:", newStats);
+
       setStats(newStats);
     } catch (error) {
-      console.error("Ошибка загрузки статистики:", error);
+      console.error("Общая ошибка загрузки статистики:", error);
       const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
       setError(errorMessage);
     } finally {
@@ -140,6 +213,8 @@ const Admin = () => {
     loadStatistics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ... остальной код (adminCards, handleCardClick, getAvailableCards, handleRefreshStats) остается без изменений
 
   const adminCards = [
     {
@@ -192,14 +267,6 @@ const Admin = () => {
     return adminCards.filter(
       (card) => user?.role === "super_admin" || card.role !== "super_admin"
     );
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("ru-RU", {
-      style: "currency",
-      currency: "RUB",
-      minimumFractionDigits: 0,
-    }).format(amount);
   };
 
   const handleRefreshStats = () => {
@@ -377,8 +444,8 @@ const Admin = () => {
               key={index}
               className={
                 availableCards.length === 2
-                  ? "col-xl-4 col-lg-5 col-md-6" // Для 2 карточек - более узкие колонки
-                  : "col-xl-4 col-lg-6 col-md-6" // Для остальных случаев
+                  ? "col-xl-4 col-lg-5 col-md-6"
+                  : "col-xl-4 col-lg-6 col-md-6"
               }
             >
               <div
@@ -415,51 +482,6 @@ const Admin = () => {
             </div>
           ))}
         </div>
-
-        {/* Альтернативный вариант для центрирования 2 карточек */}
-        {availableCards.length === 2 && (
-          <div className="row g-3">
-            <div className="col-xl-3 col-lg-2"></div>{" "}
-            {/* Левое пустое пространство */}
-            {availableCards.map((card, index) => (
-              <div key={index} className="col-xl-3 col-lg-4 col-md-6">
-                <div
-                  className={`card border-${card.color} shadow-sm h-100`}
-                  style={{ cursor: "pointer", transition: "all 0.3s" }}
-                  onClick={() => handleCardClick(card.path)}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "translateY(-5px)";
-                    e.currentTarget.style.boxShadow =
-                      "0 8px 25px rgba(0,0,0,0.15)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "translateY(0)";
-                    e.currentTarget.style.boxShadow =
-                      "0 2px 10px rgba(0,0,0,0.1)";
-                  }}
-                >
-                  <div className="card-body text-center">
-                    <i
-                      className={`bi ${card.icon} text-${card.color} display-4 mb-3`}
-                    ></i>
-                    <h5 className="card-title">{card.title}</h5>
-                    <p className="card-text text-muted">{card.description}</p>
-                  </div>
-                  <div
-                    className={`card-footer bg-${card.color} bg-opacity-10 text-center`}
-                  >
-                    <small className="text-muted">
-                      <i className="bi bi-arrow-right me-1"></i>
-                      Перейти к управлению
-                    </small>
-                  </div>
-                </div>
-              </div>
-            ))}
-            <div className="col-xl-3 col-lg-2"></div>{" "}
-            {/* Правое пустое пространство */}
-          </div>
-        )}
       </div>
     </div>
   );

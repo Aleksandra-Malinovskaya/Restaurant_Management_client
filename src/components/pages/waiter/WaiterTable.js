@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Navbar from "../../NavBar";
 import { $authHost } from "../../../http";
@@ -10,6 +10,8 @@ import {
   localToUTC,
   formatForDateTimeLocal,
 } from "../../../utils/dateUtils";
+import { toast } from "react-toastify";
+import socketService from "../../../services/socket";
 
 const WaiterTable = () => {
   const { tableId } = useParams();
@@ -24,6 +26,11 @@ const WaiterTable = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [activeTab, setActiveTab] = useState("order");
+  const [notifications, setNotifications] = useState([]);
+
+  // Refs для отслеживания состояния без триггеров рендеринга
+  const notificationTimeoutRef = useRef(null);
+  const processedNotificationsRef = useRef(new Set());
 
   // Состояния для форм
   const [showReservationModal, setShowReservationModal] = useState(false);
@@ -97,6 +104,105 @@ const WaiterTable = () => {
       setLoading(false);
     }
   }, [tableId, dishes.length]);
+
+  // Функция для добавления уведомления с защитой от дубликатов
+  const addNotification = useCallback(
+    (data, type = "dish") => {
+      const notificationId =
+        type === "dish"
+          ? `dish-${data.orderId}-${data.dishName}`
+          : `order-${data.orderId}`;
+
+      // Проверяем, не обрабатывали ли мы уже это уведомление
+      if (processedNotificationsRef.current.has(notificationId)) {
+        console.log(
+          `🔄 WaiterTable: Пропускаем дублирующее уведомление ${notificationId}`
+        );
+        return;
+      }
+
+      // Добавляем в множество обработанных
+      processedNotificationsRef.current.add(notificationId);
+
+      // Очищаем через 10 секунд из множества обработанных
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+      notificationTimeoutRef.current = setTimeout(() => {
+        processedNotificationsRef.current.delete(notificationId);
+      }, 10000);
+
+      // Показываем toast
+      if (type === "dish") {
+        toast.info(`🍽️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 6000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+      } else {
+        toast.success(`🛎️ ${data.message}`, {
+          position: "top-right",
+          autoClose: 8000,
+        });
+      }
+
+      // Добавляем в список уведомлений
+      setNotifications((prev) => {
+        const newNotification = {
+          ...data,
+          id: notificationId,
+          type,
+          timestamp: data.timestamp || new Date().toLocaleTimeString(),
+        };
+
+        // Ограничиваем список 6 уведомлениями
+        return [newNotification, ...prev.slice(0, 5)];
+      });
+
+      // Автоматически обновляем данные при уведомлении
+      loadTableData();
+    },
+    [loadTableData]
+  ); // Добавляем зависимость
+
+  // WebSocket уведомления
+  useEffect(() => {
+    console.log("WaiterTable: Инициализация WebSocket");
+
+    const orderNotificationHandler = (data) => {
+      console.log("🛎️ WaiterTable: Уведомление о готовом заказе:", data);
+      addNotification(data, "order");
+    };
+
+    const dishNotificationHandler = (data) => {
+      console.log("🍽️ WaiterTable: Уведомление о готовом блюде:", data);
+      addNotification(data, "dish");
+    };
+
+    try {
+      // Подписываемся на уведомления
+      socketService.subscribeToWaiterOrderNotifications(
+        orderNotificationHandler
+      );
+      socketService.subscribeToWaiterDishNotifications(dishNotificationHandler);
+
+      return () => {
+        console.log("🧹 WaiterTable: Очистка WebSocket подписок");
+        // Отписываемся от всех уведомлений при размонтировании
+        socketService.unsubscribeAll();
+
+        // Очищаем таймеры
+        if (notificationTimeoutRef.current) {
+          clearTimeout(notificationTimeoutRef.current);
+        }
+      };
+    } catch (error) {
+      console.error("❌ WaiterTable: Ошибка инициализации WebSocket:", error);
+    }
+  }, [addNotification]);
 
   useEffect(() => {
     if (tableId) {
@@ -181,6 +287,11 @@ const WaiterTable = () => {
     navigate("/waiter/tables");
   };
 
+  const clearNotifications = () => {
+    setNotifications([]);
+    processedNotificationsRef.current.clear();
+  };
+
   const handleCreateReservation = () => {
     const now = new Date();
 
@@ -205,6 +316,8 @@ const WaiterTable = () => {
     });
     setShowReservationModal(true);
   };
+
+  // ... остальные функции остаются без изменений ...
 
   const handleReservationSubmit = async (e) => {
     e.preventDefault();
@@ -331,6 +444,8 @@ const WaiterTable = () => {
       }
     }
   };
+
+  // ... остальные функции без изменений ...
 
   // ФУНКЦИЯ: Подача отдельного блюда
   const handleServeDish = async (orderItemId) => {
@@ -553,6 +668,11 @@ const WaiterTable = () => {
                         <h1 className="h3 mb-2">
                           <i className="bi bi-table me-2"></i>
                           Столик: {table.name}
+                          {socketService.getConnectionStatus() && (
+                            <span className="badge bg-success ms-2">
+                              <i className="bi bi-wifi"></i> Online
+                            </span>
+                          )}
                         </h1>
                         <p className="text-muted mb-0">
                           Вместимость: {table.capacity} человек
@@ -620,6 +740,62 @@ const WaiterTable = () => {
           </div>
         )}
 
+        {/* Уведомления с кухни */}
+        {notifications.length > 0 && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="card border-info">
+                <div className="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                  <span>
+                    <i className="bi bi-bell me-2"></i>
+                    Уведомления с кухни ({notifications.length})
+                  </span>
+                  <button
+                    className="btn btn-sm btn-light"
+                    onClick={clearNotifications}
+                  >
+                    <i className="bi bi-trash me-1"></i>
+                    Очистить
+                  </button>
+                </div>
+                <div className="card-body">
+                  <div className="row">
+                    {notifications.map((notif) => (
+                      <div key={notif.id} className="col-md-6 mb-2">
+                        <div
+                          className={`alert ${
+                            notif.type === "order"
+                              ? "alert-success"
+                              : "alert-info"
+                          } py-2`}
+                        >
+                          <small>
+                            <strong>{notif.message}</strong>
+                            <br />
+                            <span className="text-muted">
+                              <i className="bi bi-clock me-1"></i>
+                              {notif.timestamp}
+                            </span>
+                            {notif.tableNumber && (
+                              <>
+                                <br />
+                                <span className="text-muted">
+                                  <i className="bi bi-table me-1"></i>
+                                  Стол: {notif.tableNumber}
+                                </span>
+                              </>
+                            )}
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Статус столика */}
         <div className="row mb-4">
           <div className="col-md-6">
@@ -649,7 +825,7 @@ const WaiterTable = () => {
                 <h5>{activeOrder ? "Активный заказ" : "Нет заказов"}</h5>
                 {activeOrder && (
                   <small className="text-muted">
-                    Сумма: {calculateOrderTotal(activeOrder.items || [])} ₽
+                    Сумма: {calculateOrderTotal(activeOrder.items || [])}
                   </small>
                 )}
               </div>
@@ -759,7 +935,7 @@ const WaiterTable = () => {
                                   </td>
                                   <td>{item.quantity}</td>
                                   <td>
-                                    {item.itemPrice || item.dish?.price || 0} ₽
+                                    {item.itemPrice || item.dish?.price || 0}
                                   </td>
                                   <td>
                                     {(
@@ -767,7 +943,6 @@ const WaiterTable = () => {
                                         item.dish?.price ||
                                         0) * (item.quantity || 0)
                                     ).toFixed(2)}{" "}
-                                    ₽
                                   </td>
                                   <td>
                                     <span
@@ -825,7 +1000,6 @@ const WaiterTable = () => {
                                     {calculateOrderTotal(
                                       activeOrder.items || []
                                     ).toFixed(2)}{" "}
-                                    ₽
                                   </strong>
                                 </td>
                               </tr>
@@ -1114,7 +1288,7 @@ const WaiterTable = () => {
                                   )
                                   .map((dish) => (
                                     <option key={dish.id} value={dish.id}>
-                                      {dish.name} - {dish.price} ₽
+                                      {dish.name} - {dish.price}
                                     </option>
                                   ))}
                               </select>
@@ -1176,7 +1350,6 @@ const WaiterTable = () => {
                             <span className="badge bg-success">
                               Итого:{" "}
                               {calculateOrderTotal(orderForm.items).toFixed(2)}{" "}
-                              ₽
                             </span>
                           </div>
                         </div>
@@ -1211,14 +1384,13 @@ const WaiterTable = () => {
                                           </span>
                                         )}
                                       </td>
-                                      <td>{item.price} ₽</td>
+                                      <td>{item.price}</td>
                                       <td>{item.quantity}</td>
                                       <td>
                                         {(
                                           (item.price || 0) *
                                           (item.quantity || 0)
                                         ).toFixed(2)}{" "}
-                                        ₽
                                       </td>
                                       <td>
                                         <small className="text-muted">
@@ -1254,7 +1426,6 @@ const WaiterTable = () => {
                                         {calculateOrderTotal(
                                           orderForm.items
                                         ).toFixed(2)}{" "}
-                                        ₽
                                       </strong>
                                     </td>
                                   </tr>

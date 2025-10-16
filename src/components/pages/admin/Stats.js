@@ -67,7 +67,10 @@ const StatsPage = () => {
           requests.push(
             $authHost
               .get(`/stats/daily?date=${filters.date}`)
-              .then((res) => setDailyStats(res.data))
+              .then((res) => {
+                console.log("📊 Daily stats response:", res.data);
+                setDailyStats(res.data);
+              })
               .catch((err) => {
                 console.error("Ошибка загрузки дневной статистики:", err);
                 setDailyStats(null);
@@ -90,7 +93,7 @@ const StatsPage = () => {
             $authHost
               .get(`/stats/monthly?year=${filters.year}&month=${filters.month}`)
               .then((res) => {
-                console.log("Monthly stats response:", res.data); // Для отладки
+                console.log("Monthly stats response:", res.data);
                 setMonthlyStats(res.data);
               })
               .catch((err) => {
@@ -116,7 +119,6 @@ const StatsPage = () => {
           requests.push(loadEmployeeStats());
           break;
         default:
-          // Обработка по умолчанию для неизвестных вкладок
           console.warn(`Неизвестная вкладка: ${activeTab}`);
           break;
       }
@@ -164,7 +166,47 @@ const StatsPage = () => {
     return revenue / ordersCount;
   };
 
-  // Рендер вкладки дневной статистики
+  // ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка статусов заказов
+  const getOrderStatuses = (stats) => {
+    if (!stats || !stats.orderStatuses) {
+      return [];
+    }
+
+    // Если orderStatuses - это массив
+    if (Array.isArray(stats.orderStatuses)) {
+      return stats.orderStatuses;
+    }
+
+    // Если orderStatuses - это объект
+    if (typeof stats.orderStatuses === "object") {
+      return Object.entries(stats.orderStatuses).map(([status, count]) => ({
+        status,
+        count,
+      }));
+    }
+
+    return [];
+  };
+
+  // Функция для перевода статусов на русский
+  const translateStatus = (status) => {
+    const statusMap = {
+      open: "Открыт",
+      in_progress: "В работе",
+      ready: "Готов",
+      closed: "Закрыт",
+      completed: "Завершен",
+      pending: "В ожидании",
+      paid: "Оплачен",
+      cancelled: "Отменен",
+      served: "Обслужен",
+      payment: "Оплата",
+    };
+
+    return statusMap[status] || status;
+  };
+
+  // Рендер вкладки дневной статистики - ИСПРАВЛЕННЫЙ
   const renderDailyStats = () => {
     if (!dailyStats)
       return (
@@ -174,6 +216,10 @@ const StatsPage = () => {
         </div>
       );
 
+    // Получаем статусы заказов
+    const orderStatuses = getOrderStatuses(dailyStats);
+    console.log("📊 Order statuses data:", orderStatuses);
+
     return (
       <div className="row">
         <div className="col-12 mb-3">
@@ -182,11 +228,14 @@ const StatsPage = () => {
               <h5 className="card-title mb-0">
                 <i className="bi bi-calendar-day me-2"></i>
                 Статистика за{" "}
-                {new Date(dailyStats.date).toLocaleDateString("ru-RU")}
+                {new Date(dailyStats.date || filters.date).toLocaleDateString(
+                  "ru-RU"
+                )}
               </h5>
             </div>
             <div className="card-body">
               <div className="row">
+                {/* Заказы */}
                 <div className="col-md-6">
                   <div className="card bg-light">
                     <div className="card-body">
@@ -198,7 +247,11 @@ const StatsPage = () => {
                         <div className="col-6">
                           <div className="border-end">
                             <h3 className="text-primary">
-                              {formatNumber(dailyStats.orders.total)}
+                              {formatNumber(
+                                dailyStats.orders?.total ||
+                                  dailyStats.totalOrders ||
+                                  0
+                              )}
                             </h3>
                             <small className="text-muted">Всего заказов</small>
                           </div>
@@ -206,7 +259,11 @@ const StatsPage = () => {
                         <div className="col-6">
                           <div>
                             <h3 className="text-success">
-                              {formatNumber(dailyStats.orders.revenue)}
+                              {formatNumber(
+                                dailyStats.orders?.revenue ||
+                                  dailyStats.totalRevenue ||
+                                  0
+                              )}
                             </h3>
                             <small className="text-muted">Общая выручка</small>
                           </div>
@@ -217,7 +274,13 @@ const StatsPage = () => {
                           <div className="border-end">
                             <h4 className="text-info">
                               {formatNumber(
-                                dailyStats.orders.averageOrderValue
+                                dailyStats.orders?.averageOrderValue ||
+                                  calculateAverageCheck(
+                                    dailyStats.orders?.revenue ||
+                                      dailyStats.totalRevenue,
+                                    dailyStats.orders?.total ||
+                                      dailyStats.totalOrders
+                                  )
                               )}
                             </h4>
                             <small className="text-muted">Средний чек</small>
@@ -226,7 +289,9 @@ const StatsPage = () => {
                         <div className="col-6">
                           <div>
                             <h4 className="text-warning">
-                              {formatNumber(dailyStats.orders.uniqueWaiters)}
+                              {formatNumber(
+                                dailyStats.orders?.uniqueWaiters || 0
+                              )}
                             </h4>
                             <small className="text-muted">
                               Работало официантов
@@ -238,6 +303,7 @@ const StatsPage = () => {
                   </div>
                 </div>
 
+                {/* Бронирования */}
                 <div className="col-md-6">
                   <div className="card bg-light">
                     <div className="card-body">
@@ -249,7 +315,11 @@ const StatsPage = () => {
                         <div className="col-6">
                           <div className="border-end">
                             <h3 className="text-success">
-                              {formatNumber(dailyStats.reservations.total)}
+                              {formatNumber(
+                                dailyStats.reservations?.total ||
+                                  dailyStats.totalReservations ||
+                                  0
+                              )}
                             </h3>
                             <small className="text-muted">
                               Всего бронирований
@@ -260,7 +330,9 @@ const StatsPage = () => {
                           <div>
                             <h3 className="text-info">
                               {formatNumber(
-                                dailyStats.reservations.totalGuests
+                                dailyStats.reservations?.totalGuests ||
+                                  dailyStats.totalGuests ||
+                                  0
                               )}
                             </h3>
                             <small className="text-muted">Всего гостей</small>
@@ -272,7 +344,7 @@ const StatsPage = () => {
                 </div>
               </div>
 
-              {/* Статусы заказов */}
+              {/* ИСПРАВЛЕННЫЙ БЛОК: Статусы заказов */}
               <div className="row mt-4">
                 <div className="col-12">
                   <div className="card">
@@ -280,32 +352,92 @@ const StatsPage = () => {
                       <h6 className="card-title mb-0">Статусы заказов</h6>
                     </div>
                     <div className="card-body">
-                      <div className="row">
-                        {Object.entries(dailyStats.orderStatuses || {}).map(
-                          ([status, count]) => (
-                            <div key={status} className="col-md-3 col-6 mb-2">
+                      {orderStatuses.length > 0 ? (
+                        <div className="row">
+                          {orderStatuses.map((statusItem, index) => {
+                            const status = statusItem.status || statusItem.name;
+                            const count =
+                              statusItem.count ||
+                              statusItem.value ||
+                              statusItem.quantity;
+
+                            if (!status || count === undefined) return null;
+
+                            return (
+                              <div
+                                key={status || index}
+                                className="col-md-3 col-6 mb-2"
+                              >
+                                <div className="d-flex justify-content-between align-items-center p-2 border rounded">
+                                  <span className="text-capitalize">
+                                    {translateStatus(status)}
+                                  </span>
+                                  <span className="badge bg-primary">
+                                    {formatNumber(count)}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Добавляем фиксированные статусы, если их нет в данных */}
+                          {!orderStatuses.some((s) => s.status === "open") && (
+                            <div className="col-md-3 col-6 mb-2">
                               <div className="d-flex justify-content-between align-items-center p-2 border rounded">
-                                <span className="text-capitalize">
-                                  {status === "open" && "Открыт"}
-                                  {status === "in_progress" && "В работе"}
-                                  {status === "ready" && "Готов"}
-                                  {status === "closed" && "Закрыт"}
-                                  {status === "completed" && "Завершен"}
-                                </span>
-                                <span className="badge bg-primary">
-                                  {formatNumber(count)}
-                                </span>
+                                <span>Открыт</span>
+                                <span className="badge bg-secondary">0</span>
                               </div>
                             </div>
-                          )
-                        )}
-                        {Object.keys(dailyStats.orderStatuses || {}).length ===
-                          0 && (
-                          <div className="col-12 text-center text-muted py-3">
-                            Нет данных о статусах заказов
-                          </div>
-                        )}
-                      </div>
+                          )}
+
+                          {!orderStatuses.some(
+                            (s) => s.status === "in_progress"
+                          ) && (
+                            <div className="col-md-3 col-6 mb-2">
+                              <div className="d-flex justify-content-between align-items-center p-2 border rounded">
+                                <span>В работе</span>
+                                <span className="badge bg-secondary">0</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {!orderStatuses.some((s) => s.status === "ready") && (
+                            <div className="col-md-3 col-6 mb-2">
+                              <div className="d-flex justify-content-between align-items-center p-2 border rounded">
+                                <span>Готов</span>
+                                <span className="badge bg-secondary">0</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {!orderStatuses.some(
+                            (s) => s.status === "closed"
+                          ) && (
+                            <div className="col-md-3 col-6 mb-2">
+                              <div className="d-flex justify-content-between align-items-center p-2 border rounded">
+                                <span>Закрыт</span>
+                                <span className="badge bg-secondary">0</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        // Если нет данных о статусах, показываем фиксированный набор
+                        <div className="row">
+                          {["open", "in_progress", "ready", "closed"].map(
+                            (status) => (
+                              <div key={status} className="col-md-3 col-6 mb-2">
+                                <div className="d-flex justify-content-between align-items-center p-2 border rounded">
+                                  <span className="text-capitalize">
+                                    {translateStatus(status)}
+                                  </span>
+                                  <span className="badge bg-secondary">0</span>
+                                </div>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -316,6 +448,9 @@ const StatsPage = () => {
       </div>
     );
   };
+
+  // Остальные функции рендеринга (weeklyStats, monthlyStats, popularDishes, employeeStats)
+  // остаются без изменений...
 
   // Рендер вкладки недельной статистики
   const renderWeeklyStats = () => {
@@ -334,8 +469,8 @@ const StatsPage = () => {
             <div className="card-header">
               <h5 className="card-title mb-0">
                 <i className="bi bi-calendar-week me-2"></i>
-                Недельная статистика ({weeklyStats.period.start} -{" "}
-                {weeklyStats.period.end})
+                Недельная статистика ({weeklyStats.period?.start} -{" "}
+                {weeklyStats.period?.end})
               </h5>
             </div>
             <div className="card-body">
@@ -469,8 +604,8 @@ const StatsPage = () => {
             <div className="card-header">
               <h5 className="card-title mb-0">
                 <i className="bi bi-calendar-month me-2"></i>
-                Статистика за {monthlyStats.period.monthName}{" "}
-                {monthlyStats.period.year}
+                Статистика за {monthlyStats.period?.monthName}{" "}
+                {monthlyStats.period?.year}
               </h5>
             </div>
             <div className="card-body">
