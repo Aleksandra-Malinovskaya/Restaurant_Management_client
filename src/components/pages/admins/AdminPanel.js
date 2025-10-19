@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react"; // Добавляем useCallback
+import React, { useState, useEffect, useCallback } from "react";
 import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -48,7 +48,7 @@ const AdminPanel = () => {
     return [];
   };
 
-  // Форматирование валюты как в Admin
+  // Форматирование валюты
   const formatCurrency = (amount) => {
     const numAmount = parseFloat(amount) || 0;
     return new Intl.NumberFormat("ru-RU", {
@@ -57,13 +57,59 @@ const AdminPanel = () => {
     }).format(numAmount);
   };
 
-  // Функция загрузки статистики как в Admin - оборачиваем в useCallback
+  // ФУНКЦИЯ ДЛЯ РАСЧЕТА СВОБОДНЫХ СТОЛОВ - ИСПРАВЛЕННАЯ ЛОГИКА
+  const calculateFreeTables = (tablesData, ordersData, reservationsData) => {
+    const now = new Date();
+    let freeTablesCount = 0;
+
+    console.log("🔍 Расчет свободных столов для AdminPanel...");
+
+    tablesData.forEach((table) => {
+      // Активные заказы для стола
+      const tableOrders = ordersData.filter(
+        (order) =>
+          order.tableId === table.id &&
+          ["open", "in_progress", "ready", "payment"].includes(order.status)
+      );
+
+      // Текущие бронирования для стола
+      const currentReservation = reservationsData.find(
+        (reservation) =>
+          reservation.tableId === table.id &&
+          new Date(reservation.reservedFrom) <= now &&
+          new Date(reservation.reservedTo) >= now &&
+          ["confirmed", "seated"].includes(reservation.status)
+      );
+
+      // Стол свободен, если нет активных заказов И нет текущих бронирований
+      const isFree = tableOrders.length === 0 && !currentReservation;
+
+      if (isFree) {
+        freeTablesCount++;
+      }
+
+      console.log(`Стол ${table.name || table.id}:`, {
+        заказы: tableOrders.length,
+        бронь: currentReservation
+          ? `${currentReservation.status} (${currentReservation.customerName})`
+          : "нет",
+        свободен: isFree,
+      });
+    });
+
+    console.log(
+      `📊 Итог AdminPanel: ${freeTablesCount} свободных из ${tablesData.length} столов`
+    );
+    return freeTablesCount;
+  };
+
+  // Функция загрузки статистики - оборачиваем в useCallback
   const loadStatistics = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      console.log("Начало загрузки статистики для AdminPanel...");
+      console.log("🔄 Начало загрузки статистики для AdminPanel...");
 
       // Параллельно загружаем все данные с обработкой ошибок
       const [
@@ -75,35 +121,35 @@ const AdminPanel = () => {
       ] = await Promise.all([
         $authHost.get("/orders").catch((err) => {
           console.error(
-            "Ошибка загрузки заказов:",
+            "❌ Ошибка загрузки заказов:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/tables").catch((err) => {
           console.error(
-            "Ошибка загрузки столов:",
+            "❌ Ошибка загрузки столов:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/users").catch((err) => {
           console.error(
-            "Ошибка загрузки пользователей:",
+            "❌ Ошибка загрузки пользователей:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/dishes").catch((err) => {
           console.error(
-            "Ошибка загрузки блюд:",
+            "❌ Ошибка загрузки блюд:",
             err.response?.data || err.message
           );
           return { data: { rows: [] } };
         }),
         $authHost.get("/reservations").catch((err) => {
           console.error(
-            "Ошибка загрузки бронирований:",
+            "❌ Ошибка загрузки бронирований:",
             err.response?.data || err.message
           );
           return { data: [] };
@@ -117,7 +163,7 @@ const AdminPanel = () => {
       const dishesData = extractData(dishesResponse.data);
       const reservationsData = extractData(reservationsResponse.data);
 
-      console.log("Извлеченные данные для AdminPanel:", {
+      console.log("📊 Извлеченные данные для AdminPanel:", {
         orders: ordersData.length,
         tables: tablesData.length,
         users: usersData.length,
@@ -125,7 +171,7 @@ const AdminPanel = () => {
         reservations: reservationsData.length,
       });
 
-      // Анализируем данные и считаем статистику ТАК ЖЕ КАК В ADMIN
+      // Анализируем данные и считаем статистику С ИСПРАВЛЕННОЙ ЛОГИКОЙ
 
       // Активные заказы (не закрытые)
       const activeOrders = safeFilter(
@@ -133,13 +179,14 @@ const AdminPanel = () => {
         (order) => order.status !== "closed" && order.status !== "cancelled"
       ).length;
 
-      // Свободные столы (isActive = true)
-      const freeTables = safeFilter(
+      // Свободные столы - ИСПРАВЛЕННАЯ ЛОГИКА
+      const freeTables = calculateFreeTables(
         tablesData,
-        (table) => table.isActive === true
-      ).length;
+        ordersData,
+        reservationsData
+      );
 
-      // Активные сотрудники (все активные пользователи)
+      // Активные сотрудники
       const activeEmployees = safeFilter(
         usersData,
         (user) => user.isActive === true
@@ -160,16 +207,21 @@ const AdminPanel = () => {
         const orderDateStr = order.createdAt || order.createdDate || order.date;
         if (!orderDateStr) return false;
 
-        const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
-        const isToday = orderDate === today;
-        const isClosed = order.status === "closed";
+        try {
+          const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
+          const isToday = orderDate === today;
+          const isClosed = order.status === "closed";
 
-        return isToday && isClosed;
+          return isToday && isClosed;
+        } catch (e) {
+          console.warn("Ошибка парсинга даты заказа:", orderDateStr);
+          return false;
+        }
       }).reduce((sum, order) => {
         const amount = parseFloat(
           order.totalAmount || order.amount || order.price || 0
         );
-        return sum + amount;
+        return sum + (isNaN(amount) ? 0 : amount);
       }, 0);
 
       // Бронирования на сегодня
@@ -177,17 +229,26 @@ const AdminPanel = () => {
         if (!reservation.reservedFrom && !reservation.date) return false;
 
         const reservationDateStr = reservation.reservedFrom || reservation.date;
-        const reservationDate = new Date(reservationDateStr)
-          .toISOString()
-          .split("T")[0];
 
-        // Проверяем разные возможные статусы
-        const isConfirmed =
-          reservation.status === "confirmed" ||
-          reservation.status === "active" ||
-          reservation.isActive === true;
+        try {
+          const reservationDate = new Date(reservationDateStr)
+            .toISOString()
+            .split("T")[0];
 
-        return reservationDate === today && isConfirmed;
+          // Проверяем разные возможные статусы
+          const isConfirmed =
+            reservation.status === "confirmed" ||
+            reservation.status === "active" ||
+            reservation.isActive === true;
+
+          return reservationDate === today && isConfirmed;
+        } catch (e) {
+          console.warn(
+            "Ошибка парсинга даты бронирования:",
+            reservationDateStr
+          );
+          return false;
+        }
       }).length;
 
       const newStats = {
@@ -199,17 +260,19 @@ const AdminPanel = () => {
         todayRevenue,
       };
 
-      console.log("Рассчитанная статистика для AdminPanel:", newStats);
+      console.log("✅ Рассчитанная статистика для AdminPanel:", newStats);
+      console.log("📈 Всего столов:", tablesData.length);
+      console.log("🆓 Свободных столов:", freeTables);
 
       setStats(newStats);
     } catch (error) {
-      console.error("Общая ошибка загрузки статистики:", error);
+      console.error("❌ Общая ошибка загрузки статистики:", error);
       const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
       setError(errorMessage);
     } finally {
       setLoading(false);
     }
-  }, []); // useCallback с пустым массивом зависимостей
+  }, []);
 
   useEffect(() => {
     loadStatistics();
@@ -217,9 +280,7 @@ const AdminPanel = () => {
     // Обновление статистики каждые 30 секунд
     const interval = setInterval(loadStatistics, 30000);
     return () => clearInterval(interval);
-  }, [loadStatistics]); // Теперь loadStatistics в зависимостях
-
-  // ... остальной код без изменений
+  }, [loadStatistics]);
 
   // Карточки функций для AdminPanel
   const adminCards = [
@@ -331,7 +392,7 @@ const AdminPanel = () => {
           </div>
         )}
 
-        {/* Быстрая статистика - ТАК ЖЕ КАК В ADMIN */}
+        {/* Быстрая статистика */}
         <div className="row mb-4">
           <div className="col-12">
             <div className="card border-info">

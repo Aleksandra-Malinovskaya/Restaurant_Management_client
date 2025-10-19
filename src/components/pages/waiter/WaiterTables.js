@@ -5,9 +5,11 @@ import { $authHost } from "../../../http";
 import { formatLocalDateTime } from "../../../utils/dateUtils";
 import { toast } from "react-toastify";
 import socketService from "../../../services/socket";
+import { useAuth } from "../../../context/AuthContext"; // Добавляем контекст аутентификации
 
 const WaiterTables = () => {
   const navigate = useNavigate();
+  const { user } = useAuth(); // Получаем данные пользователя
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -15,6 +17,7 @@ const WaiterTables = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [notifications, setNotifications] = useState([]);
+  const [activeTab, setActiveTab] = useState("all"); // "all" или "my"
 
   // Refs для отслеживания состояния без триггеров рендеринга
   const notificationTimeoutRef = useRef(null);
@@ -164,6 +167,16 @@ const WaiterTables = () => {
 
   const handleTableClick = (table) => {
     navigate(`/waiter/table/${table.id}`);
+  };
+
+  // Получаем столы официанта (где есть его активные заказы)
+  const getMyTables = () => {
+    if (!user) return [];
+
+    const myOrders = orders.filter((order) => order.waiterId === user.id);
+    const myTableIds = [...new Set(myOrders.map((order) => order.tableId))];
+
+    return tables.filter((table) => myTableIds.includes(table.id));
   };
 
   // ИСПРАВЛЕННАЯ функция определения статуса столика с учетом закрытых заказов
@@ -354,6 +367,24 @@ const WaiterTables = () => {
     return null;
   };
 
+  // Получаем заказы для конкретного стола
+  const getTableOrders = (tableId) => {
+    return orders.filter(
+      (order) =>
+        order.tableId === tableId &&
+        ["open", "in_progress", "ready", "served", "payment"].includes(
+          order.status
+        )
+    );
+  };
+
+  // Проверяем, является ли стол "моим" (есть активные заказы официанта)
+  const isMyTable = (table) => {
+    if (!user) return false;
+    const tableOrders = getTableOrders(table.id);
+    return tableOrders.some((order) => order.waiterId === user.id);
+  };
+
   // Фильтрация столиков
   const filteredTables = tables.filter((table) => {
     const status = getTableStatus(table);
@@ -362,7 +393,11 @@ const WaiterTables = () => {
       .toLowerCase()
       .includes(searchTerm.toLowerCase());
 
-    return matchesStatus && matchesSearch;
+    // Фильтр по вкладкам
+    const matchesTab =
+      activeTab === "all" || (activeTab === "my" && isMyTable(table));
+
+    return matchesStatus && matchesSearch && matchesTab;
   });
 
   // Функция для получения текста статуса заказа
@@ -410,6 +445,26 @@ const WaiterTables = () => {
       return total + price * quantity;
     }, 0);
   };
+
+  // Получаем статистику по моим столам
+  const getMyTablesStats = () => {
+    const myTables = getMyTables();
+    const myOrders = orders.filter((order) => order.waiterId === user?.id);
+
+    return {
+      totalTables: myTables.length,
+      activeOrders: myOrders.filter((order) =>
+        ["open", "in_progress", "ready"].includes(order.status)
+      ).length,
+      readyOrders: myOrders.filter((order) => order.status === "ready").length,
+      totalRevenue: myOrders.reduce(
+        (sum, order) => sum + (order.totalAmount || 0),
+        0
+      ),
+    };
+  };
+
+  const myStats = getMyTablesStats();
 
   if (loading) {
     return (
@@ -552,6 +607,87 @@ const WaiterTables = () => {
           </div>
         )}
 
+        {/* Навигация по вкладкам */}
+        <div className="row mb-4">
+          <div className="col-12">
+            <div className="card">
+              <div className="card-header bg-white p-0">
+                <ul className="nav nav-tabs card-header-tabs">
+                  <li className="nav-item">
+                    <button
+                      className={`nav-link ${
+                        activeTab === "all" ? "active" : ""
+                      }`}
+                      onClick={() => setActiveTab("all")}
+                    >
+                      <i className="bi bi-grid-3x3 me-2"></i>
+                      Все столы
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button
+                      className={`nav-link ${
+                        activeTab === "my" ? "active" : ""
+                      }`}
+                      onClick={() => setActiveTab("my")}
+                    >
+                      <i className="bi bi-person-check me-2"></i>
+                      Мои столы
+                      {myStats.totalTables > 0 && (
+                        <span className="badge bg-primary ms-1">
+                          {myStats.totalTables}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Статистика моих столов (только на вкладке "Мои столы") */}
+        {activeTab === "my" && myStats.totalTables > 0 && (
+          <div className="row mb-4">
+            <div className="col-12">
+              <div className="card border-primary">
+                <div className="card-header bg-primary text-white">
+                  <i className="bi bi-person-check me-2"></i>
+                  Моя статистика
+                </div>
+                <div className="card-body">
+                  <div className="row text-center">
+                    <div className="col-md-4 mb-4">
+                      <div className="border rounded p-3 bg-light">
+                        <h4 className="text-primary mb-1">
+                          {myStats.totalTables}
+                        </h4>
+                        <small className="text-muted">Мои столы</small>
+                      </div>
+                    </div>
+                    <div className="col-md-4 mb-4">
+                      <div className="border rounded p-3 bg-light">
+                        <h4 className="text-warning mb-1">
+                          {myStats.activeOrders}
+                        </h4>
+                        <small className="text-muted">Активные заказы</small>
+                      </div>
+                    </div>
+                    <div className="col-md-4 mb-4">
+                      <div className="border rounded p-3 bg-light">
+                        <h4 className="text-success mb-1">
+                          {myStats.readyOrders}
+                        </h4>
+                        <small className="text-muted">Готовы к подаче</small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Фильтры */}
         <div className="row mb-4">
           <div className="col-12">
@@ -599,19 +735,19 @@ const WaiterTables = () => {
             <div className="card">
               <div className="card-header bg-white">
                 <h5 className="mb-0">
-                  Список столиков ({filteredTables.length})
+                  {activeTab === "all" ? "Все столики" : "Мои столики"} (
+                  {filteredTables.length})
                 </h5>
               </div>
               <div className="card-body">
                 <div className="row g-3">
                   {filteredTables.map((table) => {
                     const status = getTableStatus(table);
-                    const tableOrders = orders.filter(
-                      (order) => order.tableId === table.id
-                    );
+                    const tableOrders = getTableOrders(table.id);
                     const currentOrder =
                       tableOrders.length > 0 ? tableOrders[0] : null;
                     const reservationInfo = getTableReservationInfo(table.id);
+                    const isMy = isMyTable(table);
 
                     return (
                       <div
@@ -645,6 +781,11 @@ const WaiterTables = () => {
                               <h6 className="mb-0">
                                 <i className="bi bi-table me-1"></i>
                                 {table.name}
+                                {isMy && (
+                                  <span className="badge bg-light text-dark ms-1">
+                                    <i className="bi bi-person-check"></i>
+                                  </span>
+                                )}
                               </h6>
                               <span className="badge bg-light text-dark">
                                 {table.capacity} чел.
@@ -716,6 +857,12 @@ const WaiterTables = () => {
                                   <strong>Блюд:</strong>{" "}
                                   {currentOrder.items?.length || 0}
                                 </div>
+                                {isMy && (
+                                  <div className="small text-success">
+                                    <i className="bi bi-person-check me-1"></i>
+                                    Ваш заказ
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -734,9 +881,15 @@ const WaiterTables = () => {
                 {filteredTables.length === 0 && (
                   <div className="text-center py-5">
                     <i className="bi bi-table display-1 text-muted"></i>
-                    <h5 className="mt-3 text-muted">Столики не найдены</h5>
+                    <h5 className="mt-3 text-muted">
+                      {activeTab === "all"
+                        ? "Столики не найдены"
+                        : "У вас нет активных столов"}
+                    </h5>
                     <p className="text-muted">
-                      Попробуйте изменить параметры фильтрации
+                      {activeTab === "all"
+                        ? "Попробуйте изменить параметры фильтрации"
+                        : "Начните принимать заказы, чтобы увидеть свои столы здесь"}
                     </p>
                   </div>
                 )}

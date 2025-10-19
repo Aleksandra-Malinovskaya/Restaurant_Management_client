@@ -3,7 +3,6 @@ import Navbar from "../../NavBar";
 import { useAuth } from "../../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { orderAPI } from "../../../services/orderAPI";
-import { $authHost } from "../../../http";
 import { toast } from "react-toastify";
 import socketService from "../../../services/socket";
 
@@ -149,13 +148,6 @@ const ChefHistory = () => {
       default:
         return "";
     }
-  };
-
-  const calculateTotalRevenue = () => {
-    return completedOrders.reduce(
-      (sum, order) => sum + parseFloat(order.totalAmount || 0),
-      0
-    );
   };
 
   const calculateDishesCount = () => {
@@ -363,7 +355,7 @@ const ChefHistory = () => {
               </div>
               <div className="card-body">
                 <div className="row text-center">
-                  <div className="col-md-3 mb-3">
+                  <div className="col-md-4 mb-4">
                     <div className="border rounded p-3 bg-light">
                       <h4 className="text-primary mb-1">
                         {completedOrders.length}
@@ -371,7 +363,7 @@ const ChefHistory = () => {
                       <small className="text-muted">Завершенных заказов</small>
                     </div>
                   </div>
-                  <div className="col-md-3 mb-3">
+                  <div className="col-md-4 mb-4">
                     <div className="border rounded p-3 bg-light">
                       <h4 className="text-success mb-1">
                         {calculateDishesCount()}
@@ -379,15 +371,7 @@ const ChefHistory = () => {
                       <small className="text-muted">Приготовленных блюд</small>
                     </div>
                   </div>
-                  <div className="col-md-3 mb-3">
-                    <div className="border rounded p-3 bg-light">
-                      <h4 className="text-warning mb-1">
-                        {formatCurrency(calculateTotalRevenue())}
-                      </h4>
-                      <small className="text-muted">Общая выручка</small>
-                    </div>
-                  </div>
-                  <div className="col-md-3 mb-3">
+                  <div className="col-md-4 mb-4">
                     <div className="border rounded p-3 bg-light">
                       <h4 className="text-info mb-1">
                         {calculateAveragePreparationTime()} мин

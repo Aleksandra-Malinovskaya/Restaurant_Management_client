@@ -37,6 +37,9 @@ import WaiterTables from "./pages/waiter/WaiterTables";
 
 import AdminSettings from "./pages/admins/AdminSettings";
 import TablesManagementAdmin from "./pages/admins/TablesManagementAdmin";
+import DishesAdmin from "./pages/admins/DishesAdmin";
+import CategoriesAdmin from "./pages/admins/CategoriesAdmin";
+import StatsAdmin from "./pages/admins/StatsAdmin";
 
 import Tranee from "./pages/trainee/Tranee";
 import TraneeMenu from "./pages/trainee/TraneeMenu";
@@ -280,7 +283,7 @@ const AppRouter = () => {
         path="/admin-panel/dishes"
         element={
           <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
-            <Dishes />
+            <DishesAdmin />
           </ProtectedRoute>
         }
       />
@@ -288,7 +291,7 @@ const AppRouter = () => {
         path="/admin-panel/categories"
         element={
           <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
-            <Categories />
+            <CategoriesAdmin />
           </ProtectedRoute>
         }
       />
@@ -296,7 +299,7 @@ const AppRouter = () => {
         path="/admin-panel/stats"
         element={
           <ProtectedRoute role={user?.role} requiredRole={ADMIN_ROLE}>
-            <Stats />
+            <StatsAdmin />
           </ProtectedRoute>
         }
       />

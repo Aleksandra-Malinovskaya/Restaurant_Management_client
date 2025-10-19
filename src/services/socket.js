@@ -67,6 +67,24 @@ class SocketService {
     }
   }
 
+  // Подписка на уведомления о бронированиях
+  subscribeToReservationNotifications(callback) {
+    if (this.socket) {
+      console.log("📅 Подписка на уведомления о бронированиях");
+      this.socket.on("reservation_notification", callback);
+    } else {
+      console.log("❌ WebSocket не подключен для подписки на бронирования");
+    }
+  }
+
+  // Отписка от уведомлений о бронированиях
+  unsubscribeFromReservationNotifications() {
+    if (this.socket) {
+      console.log("📅 Отписка от уведомлений о бронированиях");
+      this.socket.off("reservation_notification");
+    }
+  }
+
   // Отписка от всех уведомлений
   unsubscribeAll() {
     if (this.socket) {
@@ -74,6 +92,7 @@ class SocketService {
       this.socket.off("new_order_notification");
       this.socket.off("order_ready_notification");
       this.socket.off("dish_ready_notification");
+      this.socket.off("reservation_notification");
     }
   }
 
@@ -83,6 +102,7 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
       this.isConnected = false;
+      console.log("🔌 WebSocket отключен вручную");
     }
   }
 

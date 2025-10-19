@@ -56,12 +56,58 @@ const Admin = () => {
     }).format(numAmount);
   };
 
+  // ФУНКЦИЯ ДЛЯ РАСЧЕТА СВОБОДНЫХ СТОЛОВ - ИСПРАВЛЕННАЯ ЛОГИКА
+  const calculateFreeTables = (tablesData, ordersData, reservationsData) => {
+    const now = new Date();
+    let freeTablesCount = 0;
+
+    console.log("🔍 Расчет свободных столов...");
+
+    tablesData.forEach((table) => {
+      // Активные заказы для стола
+      const tableOrders = ordersData.filter(
+        (order) =>
+          order.tableId === table.id &&
+          ["open", "in_progress", "ready", "payment"].includes(order.status)
+      );
+
+      // Текущие бронирования для стола
+      const currentReservation = reservationsData.find(
+        (reservation) =>
+          reservation.tableId === table.id &&
+          new Date(reservation.reservedFrom) <= now &&
+          new Date(reservation.reservedTo) >= now &&
+          ["confirmed", "seated"].includes(reservation.status)
+      );
+
+      // Стол свободен, если нет активных заказов И нет текущих бронирований
+      const isFree = tableOrders.length === 0 && !currentReservation;
+
+      if (isFree) {
+        freeTablesCount++;
+      }
+
+      console.log(`Стол ${table.name || table.id}:`, {
+        заказы: tableOrders.length,
+        бронь: currentReservation
+          ? `${currentReservation.status} (${currentReservation.customerName})`
+          : "нет",
+        свободен: isFree,
+      });
+    });
+
+    console.log(
+      `📊 Итог: ${freeTablesCount} свободных из ${tablesData.length} столов`
+    );
+    return freeTablesCount;
+  };
+
   const loadStatistics = async () => {
     try {
       setLoading(true);
       setError("");
 
-      console.log("Начало загрузки статистики...");
+      console.log("🔄 Начало загрузки статистики...");
 
       // Параллельно загружаем все данные с обработкой ошибок
       const [
@@ -73,35 +119,35 @@ const Admin = () => {
       ] = await Promise.all([
         $authHost.get("/orders").catch((err) => {
           console.error(
-            "Ошибка загрузки заказов:",
+            "❌ Ошибка загрузки заказов:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/tables").catch((err) => {
           console.error(
-            "Ошибка загрузки столов:",
+            "❌ Ошибка загрузки столов:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/users").catch((err) => {
           console.error(
-            "Ошибка загрузки пользователей:",
+            "❌ Ошибка загрузки пользователей:",
             err.response?.data || err.message
           );
           return { data: [] };
         }),
         $authHost.get("/dishes").catch((err) => {
           console.error(
-            "Ошибка загрузки блюд:",
+            "❌ Ошибка загрузки блюд:",
             err.response?.data || err.message
           );
           return { data: { rows: [] } };
         }),
         $authHost.get("/reservations").catch((err) => {
           console.error(
-            "Ошибка загрузки бронирований:",
+            "❌ Ошибка загрузки бронирований:",
             err.response?.data || err.message
           );
           return { data: [] };
@@ -115,12 +161,12 @@ const Admin = () => {
       const dishesData = extractData(dishesResponse.data);
       const reservationsData = extractData(reservationsResponse.data);
 
-      console.log("Извлеченные данные:", {
-        orders: ordersData,
-        tables: tablesData,
-        users: usersData,
-        dishes: dishesData,
-        reservations: reservationsData,
+      console.log("📊 Извлеченные данные:", {
+        orders: ordersData.length,
+        tables: tablesData.length,
+        users: usersData.length,
+        dishes: dishesData.length,
+        reservations: reservationsData.length,
       });
 
       // Анализируем данные и считаем статистику
@@ -131,13 +177,14 @@ const Admin = () => {
         (order) => order.status !== "closed" && order.status !== "cancelled"
       ).length;
 
-      // Свободные столы (isActive = true)
-      const freeTables = safeFilter(
+      // Свободные столы - ИСПРАВЛЕННАЯ ЛОГИКА
+      const freeTables = calculateFreeTables(
         tablesData,
-        (table) => table.isActive === true
-      ).length;
+        ordersData,
+        reservationsData
+      );
 
-      // Активные сотрудники (не супер-админы)
+      // Активные сотрудники
       const activeEmployees = safeFilter(
         usersData,
         (user) => user.isActive === true
@@ -158,16 +205,21 @@ const Admin = () => {
         const orderDateStr = order.createdAt || order.createdDate || order.date;
         if (!orderDateStr) return false;
 
-        const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
-        const isToday = orderDate === today;
-        const isClosed = order.status === "closed";
+        try {
+          const orderDate = new Date(orderDateStr).toISOString().split("T")[0];
+          const isToday = orderDate === today;
+          const isClosed = order.status === "closed";
 
-        return isToday && isClosed;
+          return isToday && isClosed;
+        } catch (e) {
+          console.warn("Ошибка парсинга даты заказа:", orderDateStr);
+          return false;
+        }
       }).reduce((sum, order) => {
         const amount = parseFloat(
           order.totalAmount || order.amount || order.price || 0
         );
-        return sum + amount;
+        return sum + (isNaN(amount) ? 0 : amount);
       }, 0);
 
       // Бронирования на сегодня
@@ -175,17 +227,26 @@ const Admin = () => {
         if (!reservation.reservedFrom && !reservation.date) return false;
 
         const reservationDateStr = reservation.reservedFrom || reservation.date;
-        const reservationDate = new Date(reservationDateStr)
-          .toISOString()
-          .split("T")[0];
 
-        // Проверяем разные возможные статусы
-        const isConfirmed =
-          reservation.status === "confirmed" ||
-          reservation.status === "active" ||
-          reservation.isActive === true;
+        try {
+          const reservationDate = new Date(reservationDateStr)
+            .toISOString()
+            .split("T")[0];
 
-        return reservationDate === today && isConfirmed;
+          // Проверяем разные возможные статусы
+          const isConfirmed =
+            reservation.status === "confirmed" ||
+            reservation.status === "active" ||
+            reservation.isActive === true;
+
+          return reservationDate === today && isConfirmed;
+        } catch (e) {
+          console.warn(
+            "Ошибка парсинга даты бронирования:",
+            reservationDateStr
+          );
+          return false;
+        }
       }).length;
 
       const newStats = {
@@ -197,11 +258,13 @@ const Admin = () => {
         todayRevenue,
       };
 
-      console.log("Рассчитанная статистика:", newStats);
+      console.log("✅ Рассчитанная статистика:", newStats);
+      console.log("📈 Всего столов:", tablesData.length);
+      console.log("🆓 Свободных столов:", freeTables);
 
       setStats(newStats);
     } catch (error) {
-      console.error("Общая ошибка загрузки статистики:", error);
+      console.error("❌ Общая ошибка загрузки статистики:", error);
       const errorMessage = `Не удалось загрузить статистику: ${error.message}`;
       setError(errorMessage);
     } finally {
@@ -213,8 +276,6 @@ const Admin = () => {
     loadStatistics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ... остальной код (adminCards, handleCardClick, getAvailableCards, handleRefreshStats) остается без изменений
 
   const adminCards = [
     {

@@ -300,7 +300,7 @@ const TablesManagement = () => {
   }, [reservations, orders]);
 
   const handleBack = () => {
-    navigate("/admin");
+    navigate("/admin-panel");
   };
 
   // Вспомогательные функции

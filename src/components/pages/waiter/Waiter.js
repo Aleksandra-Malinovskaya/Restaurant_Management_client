@@ -21,9 +21,10 @@ const Waiter = () => {
   const [error, setError] = useState("");
   const [notifications, setNotifications] = useState([]);
 
-  // Refs для отслеживания состояния без триггеров рендеринга
+  // Refs для отслеживания состояния
   const notificationTimeoutRef = useRef(null);
   const processedNotificationsRef = useRef(new Set());
+  const shownAutoReservationNotificationsRef = useRef(new Set()); // Только для автоматических уведомлений
 
   const loadStatistics = useCallback(async () => {
     try {
@@ -119,6 +120,82 @@ const Waiter = () => {
       setLoading(false);
     }
   }, []);
+
+  // Функция для ручной проверки бронирований (по кнопке)
+  const handleCheckReservations = async () => {
+    try {
+      console.log("🔍 Ручная проверка всех ближайших бронирований...");
+      const response = await $authHost.get("/reservations/upcoming/check");
+      const result = response.data;
+
+      console.log("Результат проверки бронирований:", result);
+
+      // Извлекаем массив бронирований из ответа
+      const upcomingReservations = result.upcomingReservations || [];
+
+      console.log(
+        "Найдено бронирований для ручной проверки:",
+        upcomingReservations
+      );
+
+      if (upcomingReservations && upcomingReservations.length > 0) {
+        // Показываем ОДНО общее уведомление о количестве бронирований
+        toast.info(
+          `Найдено ${upcomingReservations.length} ближайших бронирований`,
+          {
+            position: "top-right",
+            autoClose: 5000,
+          }
+        );
+
+        // Показываем уведомления для всех найденных броней
+        upcomingReservations.forEach((reservation) => {
+          const notificationId = `reservation-manual-${
+            reservation.id
+          }-${Date.now()}`;
+
+          // Рассчитываем оставшееся время
+          const now = new Date();
+          const reservedFrom = new Date(reservation.reservedFrom);
+          const minutesUntil = Math.round((reservedFrom - now) / 60000);
+
+          // Получаем название стола (может быть в разных полях)
+          const tableName =
+            reservation.tableName ||
+            reservation.table?.name ||
+            `Стол ${reservation.tableId}` ||
+            "Неизвестный стол";
+
+          const message = `Бронирование через ${minutesUntil} мин.: ${reservation.customerName}`;
+
+          // Добавляем в список уведомлений БЕЗ отдельного toast
+          setNotifications((prev) => {
+            const newNotification = {
+              id: notificationId,
+              type: "reservation_upcoming",
+              message: message,
+              timestamp: new Date().toLocaleTimeString(),
+              reservationId: reservation.id,
+              tableNumber: tableName,
+              minutesUntil: minutesUntil,
+              customerName: reservation.customerName,
+            };
+
+            // Ограничиваем список 8 уведомлениями
+            return [newNotification, ...prev.slice(0, 7)];
+          });
+        });
+      } else {
+        toast.info("Ближайших бронирований не найдено", {
+          position: "top-right",
+          autoClose: 3000,
+        });
+      }
+    } catch (error) {
+      console.error("Ошибка ручной проверки бронирований:", error);
+      toast.error("Ошибка при проверке бронирований");
+    }
+  };
   const formatCurrency = (amount) => {
     const numAmount = parseFloat(amount) || 0;
     return new Intl.NumberFormat("ru-RU", {
@@ -126,13 +203,22 @@ const Waiter = () => {
       maximumFractionDigits: 0,
     }).format(numAmount);
   };
+
   // Функция для добавления уведомления с защитой от дубликатов
   const addNotification = useCallback(
     (data, type = "dish") => {
-      const notificationId =
-        type === "dish"
-          ? `dish-${data.orderId}-${data.dishName}`
-          : `order-${data.orderId}`;
+      let notificationId;
+
+      if (type === "reservation") {
+        notificationId = `reservation-${data.reservationId}`;
+      } else if (type === "reservation_upcoming") {
+        notificationId = `reservation-upcoming-${data.reservationId}`;
+      } else {
+        notificationId =
+          type === "dish"
+            ? `dish-${data.orderId}-${data.dishName}`
+            : `order-${data.orderId}`;
+      }
 
       // Проверяем, не обрабатывали ли мы уже это уведомление
       if (processedNotificationsRef.current.has(notificationId)) {
@@ -153,7 +239,7 @@ const Waiter = () => {
         processedNotificationsRef.current.delete(notificationId);
       }, 10000);
 
-      // Показываем toast
+      // Показываем toast с разными стилями
       if (type === "dish") {
         toast.info(`🍽️ ${data.message}`, {
           position: "top-right",
@@ -163,10 +249,28 @@ const Waiter = () => {
           pauseOnHover: true,
           draggable: true,
         });
-      } else {
+      } else if (type === "order") {
         toast.success(`🛎️ ${data.message}`, {
           position: "top-right",
           autoClose: 8000,
+        });
+      } else if (type === "reservation") {
+        toast.warning(`📅 ${data.message}`, {
+          position: "top-right",
+          autoClose: 10000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+      } else if (type === "reservation_upcoming") {
+        toast.warning(`⏰ ${data.message}`, {
+          position: "top-right",
+          autoClose: 15000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
         });
       }
 
@@ -179,8 +283,8 @@ const Waiter = () => {
           timestamp: data.timestamp || new Date().toLocaleTimeString(),
         };
 
-        // Ограничиваем список 6 уведомлениями
-        return [newNotification, ...prev.slice(0, 5)];
+        // Ограничиваем список 8 уведомлениями
+        return [newNotification, ...prev.slice(0, 7)];
       });
 
       // Обновляем статистику
@@ -201,6 +305,34 @@ const Waiter = () => {
     const orderNotificationHandler = (data) => {
       console.log("🛎️ Waiter: Получено уведомление о готовом заказе:", data);
       addNotification(data, "order");
+    };
+
+    const reservationNotificationHandler = (data) => {
+      console.log("📅 Waiter: Получено уведомление о бронировании:", data);
+
+      // Для автоматических уведомлений о бронированиях за 15 минут
+      if (data.type === "reservation_upcoming") {
+        const notificationId = `reservation-auto-${data.reservationId}`;
+
+        // Проверяем, не показывали ли мы уже это автоматическое уведомление
+        if (!shownAutoReservationNotificationsRef.current.has(notificationId)) {
+          shownAutoReservationNotificationsRef.current.add(notificationId);
+
+          console.log(
+            "⏰ Автоматическое уведомление за 15 минут:",
+            data.message
+          );
+          addNotification(data, "reservation_upcoming");
+
+          // Очищаем через 2 часа (после того как бронь прошла)
+          setTimeout(() => {
+            shownAutoReservationNotificationsRef.current.delete(notificationId);
+          }, 2 * 60 * 60 * 1000);
+        }
+      } else {
+        // Обычные уведомления о бронированиях
+        addNotification(data, "reservation");
+      }
     };
 
     try {
@@ -224,15 +356,19 @@ const Waiter = () => {
       socketService.subscribeToWaiterOrderNotifications(
         orderNotificationHandler
       );
+      socketService.subscribeToReservationNotifications(
+        reservationNotificationHandler
+      );
     } catch (error) {
       console.error("❌ Waiter: Ошибка инициализации WebSocket:", error);
-      toast.error("Ошибка подключения к уведомлениям с кухни");
+      toast.error("Ошибка подключения к уведомлениям");
     }
 
     return () => {
       console.log("🧹 Waiter: Очистка WebSocket подписок");
       // Отписываемся от всех уведомлений при размонтировании
       socketService.unsubscribeAll();
+      socketService.unsubscribeFromReservationNotifications();
 
       // Очищаем таймеры
       if (notificationTimeoutRef.current) {
@@ -241,11 +377,9 @@ const Waiter = () => {
     };
   }, [user, addNotification]);
 
+  // Загрузка статистики при монтировании
   useEffect(() => {
     loadStatistics();
-
-    const interval = setInterval(loadStatistics, 60000);
-    return () => clearInterval(interval);
   }, [loadStatistics]);
 
   const waiterCards = [
@@ -330,6 +464,16 @@ const Waiter = () => {
                       Добро пожаловать, {user?.firstName} {user?.lastName}
                     </p>
                   </div>
+                  <div className="col-md-4 text-end">
+                    <button
+                      className="btn btn-outline-info btn-sm"
+                      onClick={handleCheckReservations}
+                      title="Показать все ближайшие бронирования (до 15 минут)"
+                    >
+                      <i className="bi bi-alarm me-1"></i>
+                      Проверка бронирования
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -365,7 +509,7 @@ const Waiter = () => {
                 <div className="card-header bg-success text-white d-flex justify-content-between align-items-center">
                   <span>
                     <i className="bi bi-bell me-2"></i>
-                    Уведомления с кухни ({notifications.length})
+                    Уведомления ({notifications.length})
                   </span>
                   <button
                     className="btn btn-sm btn-light"
@@ -379,9 +523,27 @@ const Waiter = () => {
                   <div className="row">
                     {notifications.map((notif) => (
                       <div key={notif.id} className="col-md-4 mb-2">
-                        <div className="alert alert-success py-2">
+                        <div
+                          className={`alert ${
+                            notif.type === "reservation" ||
+                            notif.type === "reservation_upcoming"
+                              ? "alert-warning"
+                              : notif.type === "order"
+                              ? "alert-success"
+                              : "alert-info"
+                          } py-2`}
+                        >
                           <small>
-                            <strong>{notif.message}</strong>
+                            <strong>
+                              {notif.type === "reservation_upcoming"
+                                ? "⏰ "
+                                : notif.type === "reservation"
+                                ? "📅 "
+                                : notif.type === "order"
+                                ? "🛎️ "
+                                : "🍽️ "}
+                              {notif.message}
+                            </strong>
                             <br />
                             <span className="text-muted">
                               <i className="bi bi-clock me-1"></i>
@@ -393,6 +555,15 @@ const Waiter = () => {
                                 <span className="text-muted">
                                   <i className="bi bi-table me-1"></i>
                                   Стол: {notif.tableNumber}
+                                </span>
+                              </>
+                            )}
+                            {notif.minutesUntil && (
+                              <>
+                                <br />
+                                <span className="text-muted">
+                                  <i className="bi bi-alarm me-1"></i>
+                                  Через: {notif.minutesUntil} мин.
                                 </span>
                               </>
                             )}
